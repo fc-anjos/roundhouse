@@ -2715,6 +2715,50 @@ end
 }
 
 #[test]
+fn activesupport_calendar_methods_type_on_a_date() {
+    let app = app_from_files(&[
+        (
+            "app/models/application_record.rb",
+            "class ApplicationRecord < ActiveRecord::Base\nend\n",
+        ),
+        (
+            "db/schema.rb",
+            "ActiveRecord::Schema.define do\n  create_table \"things\" do |t|\n    t.date \"due_on\"\n  end\nend\n",
+        ),
+        (
+            "app/models/thing.rb",
+            r#"class Thing < ApplicationRecord
+  def window
+    d = due_on
+    [Date.current.year, Date.yesterday.month, d.beginning_of_month.day, d.end_of_month.day,
+     d.next_month.month, d.yesterday.day, d.in_time_zone("UTC").hour, (d + 2).day,
+     d.all_month.begin.month, 1.in_time_zone("UTC").year]
+  end
+end
+"#,
+        ),
+    ]);
+
+    let failures = send_dispatch_failures(&app);
+    for m in [
+        "current",
+        "yesterday",
+        "beginning_of_month",
+        "end_of_month",
+        "next_month",
+        "in_time_zone",
+        "+",
+        "all_month",
+        "begin",
+    ] {
+        assert!(
+            !failures.iter().any(|f| f == m),
+            "`{m}` should type on Date / Integer calendar; failures = {failures:?}"
+        );
+    }
+}
+
+#[test]
 fn use_zone_answers_its_block_value() {
     let app = app_from_files(&[
         (

@@ -1170,6 +1170,92 @@ fn date_blog() -> emit_and_run::Overlay {
         .write("app/models/calendar_entry.rb", include_str!("date_columns_model.rb"))
 }
 
+/// ActiveSupport Date calendar: constructors, date-preserving edges, and
+/// Date→Time / Integer→Time zone conversions must both type-clean and run.
+#[test]
+fn activesupport_date_calendar_runs() {
+    emit_and_run::empty_app()
+        .write(
+            "app/models/application_record.rb",
+            "class ApplicationRecord < ActiveRecord::Base\n  self.abstract_class = true\nend\n",
+        )
+        .write(
+            "app/controllers/application_controller.rb",
+            "class ApplicationController < ActionController::Base\nend\n",
+        )
+        .write(
+            "db/schema.rb",
+            r#"ActiveRecord::Schema.define do
+  create_table "events", force: :cascade do |t|
+    t.date "due_on"
+  end
+end
+"#,
+        )
+        .write(
+            "app/models/event.rb",
+            r#"class Event < ApplicationRecord
+  def month_span
+    due_on.beginning_of_month..due_on.end_of_month
+  end
+
+  def prior_day
+    due_on.yesterday
+  end
+
+  def zoned
+    due_on.in_time_zone("UTC")
+  end
+end
+"#,
+        )
+        .write(
+            "config/routes.rb",
+            "Rails.application.routes.draw do\n  get \"/probe\", to: \"probe#show\"\nend\n",
+        )
+        .write(
+            "app/controllers/probe_controller.rb",
+            r#"class ProbeController < ApplicationController
+  def show
+    event = Event.create!(due_on: Date.new(2024, 1, 31))
+    cur = Date.current
+    yday = Date.yesterday
+    span = event.month_span
+    prior = event.prior_day
+    zoned = event.zoned
+    epoch = 1_704_067_200.in_time_zone("UTC")
+    render plain: [
+      cur.class.name,
+      yday.class.name,
+      span.begin.iso8601,
+      span.end.iso8601,
+      prior.iso8601,
+      zoned.year,
+      epoch.year
+    ].join(",")
+  end
+end
+"#,
+        )
+        .run_ruby(
+            r#"
+require_relative "app/controllers/probe_controller"
+controller = ProbeController.new
+controller.process_action(:show)
+parts = controller.body.split(",")
+raise "Date.current class: #{parts[0]}" unless parts[0] == "Date"
+raise "Date.yesterday class: #{parts[1]}" unless parts[1] == "Date"
+raise "beginning_of_month: #{parts[2]}" unless parts[2] == "2024-01-01"
+raise "end_of_month: #{parts[3]}" unless parts[3] == "2024-01-31"
+raise "yesterday: #{parts[4]}" unless parts[4] == "2024-01-30"
+raise "in_time_zone year: #{parts[5]}" unless parts[5] == "2024"
+raise "Integer#in_time_zone year: #{parts[6]}" unless parts[6] == "2024"
+puts "ActiveSupport Date calendar OK"
+"#,
+        )
+        .assert_passes();
+}
+
 fn date_json_blog() -> emit_and_run::Overlay {
     date_blog()
         .edit("app/models/calendar_entry.rb", "\nend\n", "\n  def as_json(options = {})\n    attrs = [:due_on, :observed_at]\n    json = super(only: attrs)\n    json\n  end\nend\n")
