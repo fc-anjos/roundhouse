@@ -583,7 +583,14 @@ module ActionController
       return true unless ActionController.forgery_flag
       verb = @request_method.to_s
       return true if verb == "" || verb == "GET" || verb == "HEAD"
-      expected = session[:_csrf_token].to_s
+      # Nil-then-`to_s` — not `session[:k].to_s` alone. Strict-target
+      # emit turns a missing key into JS `undefined`, and `String(undefined)`
+      # is `"undefined"`, which would fail closed even when no secret was
+      # minted. The ternary keeps an absent secret as `""` so the stub
+      # `csrf_token_valid?` can check-none; ruby-family
+      # `AuthenticityToken.valid?` still fails closed on empty.
+      raw = session[:_csrf_token]
+      expected = raw.nil? ? "" : raw.to_s
       return true if ActionController.csrf_token_valid?(params["authenticity_token"].to_s, expected)
       ActionController.csrf_token_valid?(csrf_header_token, expected)
     end
