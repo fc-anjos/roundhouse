@@ -2759,6 +2759,45 @@ end
 }
 
 #[test]
+fn date_minus_untyped_stays_gradual() {
+    // `Date - Untyped` might be Date−Date (Rational) or Date−Integer
+    // (Date). Returning Date would green-light Date-only follow-ups.
+    // `Integer#ago` is typed Untyped (Time-ish), a stable Untyped operand.
+    let app = app_from_files(&[
+        (
+            "app/models/application_record.rb",
+            "class ApplicationRecord < ActiveRecord::Base\nend\n",
+        ),
+        (
+            "db/schema.rb",
+            "ActiveRecord::Schema.define do\n  create_table \"things\" do |t|\n    t.date \"due_on\"\n  end\nend\n",
+        ),
+        (
+            "app/models/thing.rb",
+            r#"class Thing < ApplicationRecord
+  def shift
+    due_on - 1.ago
+  end
+end
+"#,
+        ),
+    ]);
+    let thing = app
+        .models
+        .iter()
+        .find(|m| m.name.0.as_str() == "Thing")
+        .expect("Thing");
+    let shift = thing
+        .methods()
+        .find(|m| m.name.as_str() == "shift")
+        .expect("shift");
+    match shift.body.ty.as_ref() {
+        Some(Ty::Untyped) => {}
+        other => panic!("Date − Untyped must stay Untyped, got {other:?}"),
+    }
+}
+
+#[test]
 fn use_zone_answers_its_block_value() {
     let app = app_from_files(&[
         (

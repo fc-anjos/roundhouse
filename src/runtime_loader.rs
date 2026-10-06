@@ -443,7 +443,11 @@ const TYPESCRIPT_RUNTIME: &[RuntimeEntry] = &[
         // FormBuilder.model is RBS-typed `ActiveRecord::Base`; the
         // emit surfaces `model: Base` on the field + constructor.
         // Type-only — runtime never instantiates Base directly.
-        imports: &[("type Base", "./active_record_base.js")],
+        // ActionController: form_authenticity_token → masked token.
+        imports: &[
+            ("type Base", "./active_record_base.js"),
+            ("ActionController", "./action_controller_base.js"),
+        ],
         prelude: NO_PRELUDE,
         // Roots for the hand-written server.ts that calls into
         // ViewHelpers directly. Suffix-renames apply (`reset_slots!`
@@ -630,6 +634,9 @@ const RUST_RUNTIME: &[RuntimeEntry] = &[
             // resolve. Trait lives in `runtime/rust/http.rs` so it
             // ships alongside the hand-written response shape.
             ("RubyToS", "http"),
+            // `form_authenticity_token` → `ActionController.masked_authenticity_token`
+            // (CSRF). Const emit is the bare type name; import it.
+            ("ActionController", "action_controller_base"),
         ],
         prelude: NO_PRELUDE,
         extra_roots: NO_EXTRA_ROOTS,
@@ -1880,6 +1887,7 @@ const PYTHON_RUNTIME: &[RuntimeEntry] = &[
         // encoding rides the Base64/JSON stdlib mappings.
         imports: &[
             ("Base", "app.active_record_base"),
+            ("ActionController", "app.action_controller_base"),
             ("re", ""),
             ("base64", ""),
             ("json", ""),

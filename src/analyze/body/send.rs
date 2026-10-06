@@ -1813,9 +1813,11 @@ fn date_method(method: &Symbol, args: &[crate::expr::Expr]) -> Option<Ty> {
         "+" if args.len() == 1 && intish(args[0].ty.as_ref()) => date(),
         // `Date - Integer` → Date; `Date - Date` → a Rational day count
         // we do not model structurally (gradual, like Time − Time).
+        // `Date - Untyped` stays gradual: the operand might be a Date
+        // (Rational) rather than an Integer day shift.
         "-" if args.len() == 1 => match args[0].ty.as_ref() {
-            Some(Ty::Date) => Ty::Untyped,
-            Some(Ty::Int) | Some(Ty::Var { .. }) | Some(Ty::Untyped) | None => date(),
+            Some(Ty::Date) | Some(Ty::Untyped) => Ty::Untyped,
+            Some(Ty::Int) | Some(Ty::Var { .. }) | None => date(),
             _ => return None,
         },
         "to_date" => date(),

@@ -918,8 +918,8 @@ fn app_uses_date(app: &App) -> bool {
 }
 
 /// Insert Date-package requires after `active_record_serialization` in
-/// `boot.rb`. Shared by Spinel emit and the ruby-family re-inject after
-/// overlay boot replacement.
+/// `boot.rb`. Spinel only — the program-defined `Date` class and the
+/// date-column JSON reopen belong on that target (matz/spinel#7334).
 fn inject_date_package_into_boot(boot: &mut String) -> Result<(), String> {
     let anchor = "require_relative \"runtime/active_record_serialization\"\n";
     // Prefer concat! over one escaped multiline string: the CI
@@ -946,14 +946,41 @@ fn inject_date_package_into_boot(boot: &mut String) -> Result<(), String> {
     }
 }
 
-fn inject_date_package_boot_requires(
+/// CRuby/JRuby overlay boot replaces Spinel's boot wholesale, wiping
+/// the Date-package inject. Re-inject **only** the shared `date_*`
+/// calendar helpers (invariant 2). Do not load Spinel's `date.rb`
+/// polyfill (clobbers stdlib Date → `@year` nil on `>>`) or
+/// `active_record_date_serialization` (overlay already wraps
+/// `_as_json_only`; a second alias infinite-recurses).
+fn inject_cruby_date_calendar_helpers(boot: &mut String) -> Result<(), String> {
+    let anchor = "require_relative \"runtime/active_record_serialization\"\n";
+    let inject = concat!(
+        "# Date calendar helpers — shared with Spinel (invariant 2).\n",
+        "require_relative \"runtime/active_support_date_parsing\"\n",
+    );
+    if boot.contains("require_relative \"runtime/active_support_date_parsing\"") {
+        return Ok(());
+    }
+    if let Some(at) = boot.find(anchor) {
+        boot.insert_str(at + anchor.len(), inject);
+        Ok(())
+    } else {
+        Err(
+            "boot.rb missing active_record_serialization require \
+             (CRuby date calendar inject anchor)"
+                .into(),
+        )
+    }
+}
+
+fn inject_cruby_date_calendar_boot_requires(
     files: &mut Vec<(String, String)>,
 ) -> Result<(), String> {
     let boot = files
         .iter_mut()
         .find(|(p, _)| p == "boot.rb")
-        .ok_or("ruby family: boot.rb missing for Date package re-inject")?;
-    inject_date_package_into_boot(&mut boot.1)
+        .ok_or("ruby family: boot.rb missing for date calendar re-inject")?;
+    inject_cruby_date_calendar_helpers(&mut boot.1)
 }
 
 /// The executed Date-only runtime is native Ruby (and now Spinel), not
@@ -2588,10 +2615,11 @@ fn ruby_family_runtime_files(
     apply_module_mixins(&mut files, app, MixinForm::ExplicitReceiver);
     // Overlay boot replaces the spinel boot wholesale (see comment above
     // on apply_module_mixins), wiping the Date-package inject from
-    // `spinel_files`. Re-inject here so CRuby/JRuby share one
-    // `active_support_date_parsing` home with Spinel (invariant 2).
+    // `spinel_files`. Re-inject only the shared `date_*` helpers — not
+    // Spinel's Date polyfill or date-JSON reopen (see
+    // `inject_cruby_date_calendar_helpers`).
     if app_uses_date(app) {
-        inject_date_package_boot_requires(&mut files)?;
+        inject_cruby_date_calendar_boot_requires(&mut files)?;
     }
     Ok(files)
 }
