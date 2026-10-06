@@ -205,6 +205,22 @@ fn calendar_methods_on_a_date_ground_to_date_preserving_functions() {
         emit("due_on.beginning_of_day"),
         "ActiveSupport.beginning_of_day(ActiveSupport.date_at_midnight(due_on))"
     );
+    assert_eq!(
+        emit("due_on + 2"),
+        "ActiveSupport.date_days_since(due_on, 2)"
+    );
+    assert_eq!(
+        emit("due_on - 1"),
+        "ActiveSupport.date_days_ago(due_on, 1)"
+    );
+    assert_eq!(
+        emit("due_on.past?"),
+        "ActiveSupport.date_past?(due_on, ActiveSupport.date_current(ActiveSupport.now))"
+    );
+    assert_eq!(
+        emit("due_on.today?"),
+        "ActiveSupport.date_today?(due_on, ActiveSupport.date_current(ActiveSupport.now))"
+    );
 }
 
 #[test]

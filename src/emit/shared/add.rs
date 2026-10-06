@@ -75,6 +75,10 @@ pub fn classify_add(lhs: &Expr, rhs: &Expr) -> AddCase {
         (Ty::Int, Ty::Int) | (Ty::Float, Ty::Float) => AddCase::Numeric,
         (Ty::Int, Ty::Float) | (Ty::Float, Ty::Int) => AddCase::NumericPromote,
         (Ty::Str, Ty::Str) => AddCase::StringConcat,
+        // Date + Integer is Ruby (and ActiveSupport) day arithmetic.
+        // Lowering grounds it to `date_days_since` for Spinel; CRuby
+        // keeps native `+`. Not Incompatible.
+        (Ty::Date, Ty::Int) => AddCase::Unknown,
         _ => {
             // Collection `+` collection is *always* valid Ruby — it
             // concatenates regardless of element types, yielding

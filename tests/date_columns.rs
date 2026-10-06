@@ -294,6 +294,8 @@ fn known_bad_constructor_arguments_remain_errors() {
         "Date.strptime(\"2024-01-31\", 17)",
         "Date.today(\"bad\")",
         "Date.current(\"bad\")",
+        "Date.yesterday(1)",
+        "Date.tomorrow(1)",
     ] {
         let mut app = app_with(
             "",

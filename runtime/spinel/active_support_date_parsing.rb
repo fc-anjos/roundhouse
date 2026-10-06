@@ -113,4 +113,26 @@ module ActiveSupport
   def self.date_end_of_year(d)
     Date.new(d.year, 12, 31)
   end
+
+  # Rails Date#today? / yesterday? / tomorrow? / past? / future? compare
+  # calendar days against Date.current — not a midnight Time against now.
+  def self.date_today?(d, current)
+    d.year == current.year && d.month == current.month && d.day == current.day
+  end
+
+  def self.date_yesterday?(d, current)
+    date_today?(d, date_yesterday(current))
+  end
+
+  def self.date_tomorrow?(d, current)
+    date_today?(d, date_tomorrow(current))
+  end
+
+  def self.date_past?(d, current)
+    civil_days(d.year, d.month, d.day) < civil_days(current.year, current.month, current.day)
+  end
+
+  def self.date_future?(d, current)
+    civil_days(d.year, d.month, d.day) > civil_days(current.year, current.month, current.day)
+  end
 end

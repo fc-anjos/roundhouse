@@ -23,4 +23,9 @@ module ActiveSupport
   def self.date_end_of_month: (Date d) -> Date
   def self.date_beginning_of_year: (Date d) -> Date
   def self.date_end_of_year: (Date d) -> Date
+  def self.date_today?: (Date d, Date current) -> bool
+  def self.date_yesterday?: (Date d, Date current) -> bool
+  def self.date_tomorrow?: (Date d, Date current) -> bool
+  def self.date_past?: (Date d, Date current) -> bool
+  def self.date_future?: (Date d, Date current) -> bool
 end

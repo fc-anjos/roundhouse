@@ -1,7 +1,7 @@
 // Not reopened on `Time` / `Date` (no built-in reopening, and spinel cannot
 // dispatch one): each extension grounds to a function in
-// runtime/ruby/active_support_ext.rb. Date-preserving helpers are the
-// `date_*` family; Time helpers stay on the original names.
+// runtime/ruby/active_support_ext.rb (Time) or the date-gated
+// runtime/spinel/active_support_date_parsing.rb (`date_*` family).
 use crate::app::App;
 use crate::expr::{Expr, ExprNode, Literal};
 use crate::ident::{ClassId, Symbol};
@@ -253,17 +253,44 @@ fn rewrite_date_value(expr: &mut Expr, r: &Expr, method: &str, args: &[Expr]) {
         *expr.node = active_support_call("on_wday?", vec![midnight, lit]);
         return;
     }
-    // Predicates that need a clock: compare via midnight Time.
+    // Predicates compare calendar days against Date.current (Rails),
+    // not midnight-Time vs wall clock (that makes "today" past? after noon).
     if matches!(method, "today?" | "yesterday?" | "tomorrow?" | "past?" | "future?")
         && args.is_empty()
     {
-        let midnight = time_expr(active_support_call("date_at_midnight", vec![r.clone()]));
-        *expr.node = active_support_call(method, vec![midnight, now()]);
+        let current = date_expr(active_support_call("date_current", vec![now()]));
+        let target = match method {
+            "today?" => "date_today?",
+            "yesterday?" => "date_yesterday?",
+            "tomorrow?" => "date_tomorrow?",
+            "past?" => "date_past?",
+            "future?" => "date_future?",
+            _ => unreachable!(),
+        };
+        *expr.node = active_support_call(target, vec![r.clone(), current]);
         return;
     }
     if matches!(method, "on_weekend?" | "on_weekday?") && args.is_empty() {
         let midnight = time_expr(active_support_call("date_at_midnight", vec![r.clone()]));
         *expr.node = active_support_call(method, vec![midnight]);
+        return;
+    }
+    // `Date + n` / `Date - n` — Spinel Date has no arithmetic; ground to day shifts.
+    // Leave `Date - Date` alone (Rational day count; not modeled).
+    if matches!(method, "+" | "-")
+        && args.len() == 1
+        && args[0]
+            .ty
+            .as_ref()
+            .is_none_or(|t| matches!(t, Ty::Int | Ty::Var { .. }))
+    {
+        let target = if method == "+" {
+            "date_days_since"
+        } else {
+            "date_days_ago"
+        };
+        *expr.node = active_support_call(target, vec![r.clone(), args[0].clone()]);
+        expr.ty = Some(Ty::Date);
         return;
     }
     let (target, max_args) = match method {

@@ -1783,12 +1783,10 @@ fn date_constructor(method: &Symbol, args: &[crate::expr::Expr]) -> Option<Ty> {
         "parse" => vec![Ty::Str, Ty::Bool, numeric],
         "strptime" => vec![Ty::Str, Ty::Str, numeric],
         "iso8601" => vec![Ty::Str, numeric],
-        // `Date.today` is Ruby stdlib (system local). Rails'
-        // `Date.current` respects `Time.zone` but still returns a Date;
-        // `Date.yesterday` / `Date.tomorrow` are AS class-side helpers
-        // built on `Date.current`. All share the optional start-day arg
-        // shape of `Date.today`.
-        "today" | "current" | "yesterday" | "tomorrow" => vec![numeric],
+        // `Date.today` is Ruby stdlib (optional start-day). Rails'
+        // `Date.current` / `yesterday` / `tomorrow` take no arguments.
+        "today" => vec![numeric],
+        "current" | "yesterday" | "tomorrow" => vec![],
         _ => return None,
     };
     let accepts = |actual: Option<&Ty>, expected: &Ty| match actual {
@@ -1828,8 +1826,7 @@ fn date_method(method: &Symbol, args: &[crate::expr::Expr]) -> Option<Ty> {
         | "prev_year" | "next_year" | "last_year" | "years_ago" | "years_since"
         | "beginning_of_week" | "end_of_week" | "at_beginning_of_week" | "at_end_of_week"
         | "beginning_of_month" | "end_of_month" | "at_beginning_of_month" | "at_end_of_month"
-        | "beginning_of_year" | "end_of_year" | "at_beginning_of_year" | "at_end_of_year"
-        | "change" | "advance" => date(),
+        | "beginning_of_year" | "end_of_year" | "at_beginning_of_year" | "at_end_of_year" => date(),
         // Date → time-of-day / zone conversions (Rails returns TimeWithZone).
         "to_time" | "in_time_zone" | "beginning_of_day" | "end_of_day" | "midnight"
         | "at_midnight" | "at_beginning_of_day" | "at_end_of_day" | "noon" | "at_noon"
@@ -1847,7 +1844,9 @@ fn date_method(method: &Symbol, args: &[crate::expr::Expr]) -> Option<Ty> {
         "iso8601" | "xmlschema" | "to_s" | "to_fs" | "to_formatted_s" | "strftime" | "inspect" => {
             Ty::Str
         }
-        "<" | ">" | "<=" | ">=" | "between?" | "leap?"
+        // `change` / `advance` / `between?` stay unmodeled until runtime +
+        // lowering exist (invariant 6 — typing alone is a silent break).
+        "<" | ">" | "<=" | ">=" | "leap?"
         | "after?" | "before?" | "past?" | "future?" | "today?" | "yesterday?" | "tomorrow?"
         | "monday?" | "tuesday?" | "wednesday?" | "thursday?" | "friday?"
         | "saturday?" | "sunday?" | "on_weekend?" | "on_weekday?" => Ty::Bool,

@@ -1222,7 +1222,14 @@ end
     yday = Date.yesterday
     span = event.month_span
     prior = event.prior_day
+    # Non-nilable Date literal: column readers are Date? and binop gate
+    # refuses Date? + Integer (see #394); day arithmetic on a known Date
+    # still grounds through date_days_since.
+    shifted = Date.new(2024, 1, 31) + 2
     zoned = event.zoned
+    # Today must not be past? (Rails Date#past? is self < Date.current).
+    today_past = Date.current.past?
+    old_past = Date.new(2020, 1, 1).past?
     epoch = 1_704_067_200.in_time_zone("UTC")
     render plain: [
       cur.class.name,
@@ -1230,7 +1237,10 @@ end
       span.begin.iso8601,
       span.end.iso8601,
       prior.iso8601,
+      shifted.iso8601,
       zoned.year,
+      today_past,
+      old_past,
       epoch.year
     ].join(",")
   end
@@ -1248,8 +1258,11 @@ raise "Date.yesterday class: #{parts[1]}" unless parts[1] == "Date"
 raise "beginning_of_month: #{parts[2]}" unless parts[2] == "2024-01-01"
 raise "end_of_month: #{parts[3]}" unless parts[3] == "2024-01-31"
 raise "yesterday: #{parts[4]}" unless parts[4] == "2024-01-30"
-raise "in_time_zone year: #{parts[5]}" unless parts[5] == "2024"
-raise "Integer#in_time_zone year: #{parts[6]}" unless parts[6] == "2024"
+raise "Date+2: #{parts[5]}" unless parts[5] == "2024-02-02"
+raise "in_time_zone year: #{parts[6]}" unless parts[6] == "2024"
+raise "today.past?: #{parts[7]}" unless parts[7] == "false"
+raise "old.past?: #{parts[8]}" unless parts[8] == "true"
+raise "Integer#in_time_zone year: #{parts[9]}" unless parts[9] == "2024"
 puts "ActiveSupport Date calendar OK"
 "#,
         )
