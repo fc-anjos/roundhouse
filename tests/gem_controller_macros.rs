@@ -75,10 +75,22 @@ fn invisible_captcha_becomes_a_before_action_and_spam_gate() {
         src.contains("ActionController::InvisibleCaptcha.spam?"),
         "runtime gate call:\n{src}"
     );
-    // `only: :create` — the gate is composed into create, not show.
+    // `only: :create` — the gate is inlined into create's body, not show.
+    let create = src
+        .find("def create")
+        .and_then(|i| src[i..].find("def show").map(|j| &src[i..i + j]))
+        .expect("create before show");
+    let show = src
+        .find("def show")
+        .map(|i| &src[i..])
+        .expect("def show");
     assert!(
-        src.contains("def create") && src.contains("InvisibleCaptcha.spam?"),
-        "gate on create:\n{src}"
+        create.contains("InvisibleCaptcha.spam?"),
+        "gate bound to create:\n{src}"
+    );
+    assert!(
+        !show.contains("InvisibleCaptcha.spam?"),
+        "gate must not run on show:\n{src}"
     );
 }
 

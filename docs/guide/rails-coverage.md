@@ -248,22 +248,23 @@ Anything not in that section that differs from Rails is a bug, and the
 
 ## Security posture
 
-**CSRF is verified on the ruby family where the app declares it** —
-the CRuby and Spinel lanes, which is where Campfire deploys.
-`protect_from_forgery with: :exception` runs as the `before_action`
-Rails registers, at the same place in the chain, with its `only:` /
-`except:` / `if:` / `unless:`; `skip_forgery_protection` removes it.
-A non-GET request must carry the session's token in the
-`authenticity_token` param or the `X-CSRF-Token` header, and a present
-`Origin` must name the request's own host; otherwise the answer is
-Rails' 422. The emitted test harness
+**CSRF is verified on the ruby family** — the CRuby and Spinel lanes,
+which is where Campfire deploys. Rails' `load_defaults` 5.2+ implicit
+`protect_from_forgery with: :exception` heads every
+`ActionController::Base` chain; a written macro re-registers the same
+filter (with its `only:` / `except:` / `if:` / `unless:`);
+`skip_forgery_protection` removes it. A non-GET request must carry the
+session's masked token in the `authenticity_token` param or the
+`X-CSRF-Token` header, and a present `Origin` must name the request's
+own host; otherwise the answer is Rails' 422. The emitted test harness
 turns the check off, as a generated `config/environments/test.rb`
 does.
 
 What differs from Rails, and why:
 
-- **Tokens are not masked.** Rails hands out a per-render masked token
-  (a BREACH mitigation); the emit issues the session token itself.
+- **Tokens are masked on the ruby family.** Rails' per-render one-time-pad
+  XOR lives in `ActionController::AuthenticityToken`; strict-target emit
+  of `base.rb` still answers an empty token (no `Current.session`).
 - **The Origin check compares hosts, not schemes.** Rails compares
   `request.base_url`. The ruby family now reads `X-Forwarded-Proto`
   (absolute URLs behind a TLS proxy are https, as in Rails), but
@@ -284,15 +285,15 @@ What differs from Rails, and why:
   0600), the directory a deployment already persists for its database.
   Set the variable to share one key across instances, or to carry a key
   over from a Rails deployment.
-- **Rails' implicit default is not applied.** Under `load_defaults`
-  5.2+, Rails protects every `ActionController::Base` controller even
-  when the app never writes the macro. Here only a written
-  `protect_from_forgery with: :exception` is enforced: an app that
-  relies on the default (the blog, the Rails tutorial) is not
-  protected on any lane. The default would put the check into every
-  target's emit, and the strict targets have no token to check.
-- **`with: :null_session` / `:reset_session` and `prepend:` are not
-  modeled.** Such a macro is reported as a gap and not enforced.
+- **Rails' implicit default is applied on every lane.** Under
+  `load_defaults` 5.2+, every `ActionController::Base` controller runs
+  `verify_authenticity_token` unless the app opts out. The ruby family
+  mints and checks masked tokens; strict targets still issue no token and
+  treat an empty session secret as "check none" so POSTs are not 422'd.
+- **`with: :null_session` / `:reset_session` still register the 422
+  handler.** Those strategies are recognized as forgery filters but are
+  not modeled as empty-session / wipe pass-throughs. `prepend:` and a
+  custom `store:` remain unmodeled.
 - **Action Cable's Origin check uses Rails' defaults only.** On the
   ruby family, a `/cable` handshake must carry an `Origin` naming the
   request's own host (compared by host, as above), or in development

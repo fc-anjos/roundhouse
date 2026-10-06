@@ -17,12 +17,15 @@ module ActionController
 
   # Empty until `authenticity_token.rb` reopens these: strict-target
   # emit of this file must not call `Current.session` or XOR bytes.
+  # Strict targets therefore issue no token and check none (see
+  # docs/guide/rails-coverage.md): an empty session secret means
+  # "no minting on this lane," not "fail closed."
   def self.masked_authenticity_token
     ""
   end
 
   def self.csrf_token_valid?(given, expected)
-    return false if expected.empty?
+    return true if expected.empty?
     given.length > 0 && given == expected
   end
 

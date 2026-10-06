@@ -221,13 +221,26 @@ pub(super) fn ingest_devise_for(
                         });
                     };
                     for cel in elements {
-                        let Some(ca) = cel.as_assoc_node() else { continue };
-                        let Some(ck) = symbol_value(&ca.key()) else { continue };
+                        let Some(ca) = cel.as_assoc_node() else {
+                            return Err(IngestError::Unsupported {
+                                file: file.into(),
+                                message: "devise_for controllers: unsupported entry".into(),
+                            });
+                        };
+                        let Some(ck) =
+                            symbol_value(&ca.key()).or_else(|| string_value(&ca.key()))
+                        else {
+                            return Err(IngestError::Unsupported {
+                                file: file.into(),
+                                message: "devise_for controllers: key must be a symbol or string"
+                                    .into(),
+                            });
+                        };
                         let Some(cv) = string_value(&ca.value()) else {
                             return Err(IngestError::Unsupported {
                                 file: file.into(),
                                 message: format!(
-                                    "devise_for controllers: :{ck} must be a string path"
+                                    "devise_for controllers: {ck} must be a string path"
                                 ),
                             });
                         };

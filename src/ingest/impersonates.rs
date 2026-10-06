@@ -7,9 +7,11 @@
 //! to `true_<scope>` and wrapped. When it does not (Devise may supply
 //! `current_<scope>` only as a typed seam), an empty `true_<scope>` is
 //! synthesized so the pretender surface still exists — no invented host
-//! session key. Unsupported kwargs leave the call as `Unknown` for the
-//! survey. ActionCable `impersonates` is a different host and is not
-//! handled here.
+//! session key. A class-level `alias_method :true_<scope>, :current_<scope>`
+//! is not used here: `apply_alias_methods` copies bodies after the wrap
+//! is already in the method list, which would recurse. Unsupported
+//! kwargs leave the call as `Unknown` for the survey. ActionCable
+//! `impersonates` is a different host and is not handled here.
 
 use crate::dialect::{Controller, ControllerBodyItem};
 use crate::expr::{Expr, ExprNode, Literal};
@@ -111,7 +113,9 @@ fn method_source(imp: &Impersonation, synthesize_true_user: bool) -> String {
         // Pretender aliases an existing `current_<scope>`. Without a
         // local definition (e.g. only a typed Devise seam), synthesize
         // an empty true_<scope> so the wrap and impersonate_* surface
-        // still exist — no invented host session key.
+        // still exist — no invented host session key. Do not emit
+        // `alias_method` here: apply_alias_methods would copy the
+        // already-wrapped current_<scope> body onto true_<scope>.
         out.push_str(&format!("  def true_{scope}\n  end\n"));
     }
     out.push_str(&format!(

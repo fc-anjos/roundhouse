@@ -478,6 +478,39 @@ end
 }
 
 #[test]
+fn devise_for_accepts_string_controller_keys() {
+    // Devise accepts string keys in `controllers:`; skipping them would
+    // silently fall back to Devise::*Controller.
+    let source = br#"Rails.application.routes.draw do
+  devise_for :users,
+    controllers: {
+      "sessions" => "users/sessions",
+      registrations: "users/registrations"
+    }
+end
+"#;
+    roundhouse::ingest::survey::activate();
+    let (result, _) = roundhouse::ingest::prism::scope(|| {
+        roundhouse::ingest::ingest_routes(source, "config/routes.rb")
+    });
+    let gaps = roundhouse::ingest::survey::drain();
+    let table = result.expect("ingest");
+    assert!(
+        gaps.iter().all(|g| !format!("{g:?}").contains("devise_for")),
+        "string-keyed controllers must not survey: {gaps:?}"
+    );
+    let mut app = roundhouse::App::default();
+    app.routes = table;
+    let flat = roundhouse::lower::flatten_routes(&app);
+    let by_name: std::collections::HashMap<_, _> =
+        flat.iter().map(|r| (r.as_name.as_str(), r)).collect();
+    let session = by_name.get("new_user_session").expect("new_user_session");
+    assert_eq!(session.controller.0.as_str(), "Users::SessionsController");
+    let reg = by_name.get("new_user_registration").expect("new_user_registration");
+    assert_eq!(reg.controller.0.as_str(), "Users::RegistrationsController");
+}
+
+#[test]
 fn devise_for_defaults_controllers_under_devise_module() {
     // Bare `devise_for :users` must resolve to Devise::*Controller, not
     // top-level SessionsController (Devise::Mapping#default_controllers).
