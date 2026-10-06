@@ -443,7 +443,15 @@ const TYPESCRIPT_RUNTIME: &[RuntimeEntry] = &[
         // FormBuilder.model is RBS-typed `ActiveRecord::Base`; the
         // emit surfaces `model: Base` on the field + constructor.
         // Type-only — runtime never instantiates Base directly.
-        imports: &[("type Base", "./active_record_base.js")],
+        // `form_authenticity_token` calls
+        // `ActionController.masked_authenticity_token` (see
+        // view_helpers.rb); without this import the worker throws
+        // `ActionController is not defined` on any layout that
+        // renders csrf_meta_tags / authenticity_token fields.
+        imports: &[
+            ("type Base", "./active_record_base.js"),
+            ("ActionController", "./action_controller_base.js"),
+        ],
         prelude: NO_PRELUDE,
         // Roots for the hand-written server.ts that calls into
         // ViewHelpers directly. Suffix-renames apply (`reset_slots!`

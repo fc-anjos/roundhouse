@@ -394,6 +394,9 @@ fn devise_scope_and_authenticated_passthrough_nested_routes() {
       root to: "dashboard#show"
     end
   end
+  unauthenticated :user do
+    get "join", to: "registrations#new"
+  end
   devise_scope :user do
     get "session/otp", to: "sessions#otp"
   end
@@ -411,7 +414,9 @@ end
     assert!(
         gaps.iter().all(|g| {
             let s = format!("{g:?}");
-            !s.contains("authenticated") && !s.contains("devise_scope")
+            !s.contains("authenticated")
+                && !s.contains("unauthenticated")
+                && !s.contains("devise_scope")
         }),
         "Devise wrappers must not survey: {gaps:?}"
     );
@@ -421,6 +426,10 @@ end
     assert!(
         flat.iter().any(|r| r.path == "/admin/users" && r.as_name == "admin_users"),
         "authenticated nested resources: {flat:?}"
+    );
+    assert!(
+        flat.iter().any(|r| r.path == "/join" && r.controller.0.as_str() == "RegistrationsController"),
+        "unauthenticated nested route: {flat:?}"
     );
     assert!(
         flat.iter().any(|r| r.path == "/session/otp" && r.controller.0.as_str() == "SessionsController"),
@@ -466,6 +475,43 @@ end
     assert!(by_name.contains_key("destroy_user_session"));
     assert!(by_name.contains_key("edit_user_password"));
     assert!(by_name.contains_key("user_confirmation"));
+}
+
+#[test]
+fn devise_for_defaults_controllers_under_devise_module() {
+    // Bare `devise_for :users` must resolve to Devise::*Controller, not
+    // top-level SessionsController (Devise::Mapping#default_controllers).
+    let source = br#"Rails.application.routes.draw do
+  devise_for :users
+end
+"#;
+    roundhouse::ingest::survey::activate();
+    let (result, _) = roundhouse::ingest::prism::scope(|| {
+        roundhouse::ingest::ingest_routes(source, "config/routes.rb")
+    });
+    let gaps = roundhouse::ingest::survey::drain();
+    let table = result.expect("ingest");
+    assert!(
+        gaps.iter().all(|g| !format!("{g:?}").contains("devise_for")),
+        "bare devise_for must not survey: {gaps:?}"
+    );
+    let mut app = roundhouse::App::default();
+    app.routes = table;
+    let flat = roundhouse::lower::flatten_routes(&app);
+    let by_name: std::collections::HashMap<_, _> =
+        flat.iter().map(|r| (r.as_name.as_str(), r)).collect();
+    let session = by_name.get("new_user_session").expect("new_user_session");
+    assert_eq!(session.path, "/users/sign_in");
+    assert_eq!(session.controller.0.as_str(), "Devise::SessionsController");
+    let reg = by_name.get("new_user_registration").expect("new_user_registration");
+    assert_eq!(reg.controller.0.as_str(), "Devise::RegistrationsController");
+    let password = by_name.get("new_user_password").expect("new_user_password");
+    assert_eq!(password.controller.0.as_str(), "Devise::PasswordsController");
+    let confirmation = by_name.get("user_confirmation").expect("user_confirmation");
+    assert_eq!(
+        confirmation.controller.0.as_str(),
+        "Devise::ConfirmationsController"
+    );
 }
 
 #[test]

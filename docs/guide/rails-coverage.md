@@ -169,7 +169,7 @@ not add generic class-object/Relation support to strict targets.
 
 | | Blog tier | Campfire tier |
 |---|---|---|
-| Actions | The seven RESTful actions and any other; implicit render | + `head`, `send_file`, `rescue_from`, `rate_limit` (`to:`/`within:`/`by:`/`with:`/`only:`/`except:`, counted in the app's cache as in Rails) |
+| Actions | The seven RESTful actions and any other; implicit render | + `head`, `send_file`, `rescue_from`, `rate_limit` (`to:`/`within:`/`by:`/`with:`/`only:`/`except:`, counted in the app's cache as in Rails), `invisible_captcha` (`only:`/`except:`/`prepend:` → honeypot `spam?` gate), pretender `impersonates :scope` (wraps `current_<scope>`, adds `impersonate_` / `stop_impersonating_`) |
 | Filters | `before_action` with `only:`/`except:`, ivar flow into views | + `around_action`, `after_action`, `if:`/`unless:` guards (symbol and lambda), `skip_before_action`, filters from concerns |
 | Params | `params.expect`, `params.require(...).permit(...)`, `params[:id]`; typed by the schema they're assigned to | + nested permits, arrays, `params.merge`, indifferent access |
 | Responses | `render` (template, partial, `json:`, `status:`), `redirect_to` (record, path, `status:`), `respond_to` with `format.html`/`format.json`, `flash` and `flash.now` | + `expires_in`, `stale?`/`fresh_when` (answered as always fresh — a deliberate divergence), `cookies` and `cookies.signed`/`.permanent`, `session`, `helper_method`, `layout` |
@@ -197,7 +197,7 @@ not add generic class-object/Relation support to strict targets.
 | Routing | `resources`/`resource` (nested, `only:`/`except:`, `member`/`collection`), `namespace`/`scope`, `root`, `get`/`post`/…, `constraints`, format suffixes, Active Storage's mounted engine, Devise's `devise_for` (static session/registration/password/confirmation routes + `controllers:` overrides), `authenticated`/`unauthenticated`/`devise_scope` as passthrough wrappers (auth not enforced). Not: `concern`, `direct` (a custom URL helper with an arbitrary body — dropped), `mount` of any other engine, Doorkeeper's DSL, Devise OmniAuth callback routes, Devise `skip:`/`only:`/`path:` options. |
 | Configuration | `config.x.*`, initializers that define constants or mix modules into models, `Rails.application.config` reads, the app's inflections. Not: `Rails.application.credentials`. |
 | Caching | Fragment caching (`cache` in views, keyed by record) and `Rails.cache.fetch`, in-process. |
-| Gems | The census names what is modeled. Modeled today: bcrypt, image_processing/ruby-vips (Spinel), rqrcode, useragent, web-push, net-http-persistent, concurrent-ruby's thread pool, importmap-rails, turbo-rails, stimulus-rails, tailwindcss-rails, jbuilder, propshaft. Everything else in a Gemfile is either infrastructure (never enters the analysis) or unknown. |
+| Gems | The census names what is modeled. Modeled today: bcrypt, devise (route helpers + `devise_for` / visibility wrappers), image_processing/ruby-vips (Spinel), invisible_captcha, pretender, rqrcode, useragent, web-push, net-http-persistent, concurrent-ruby's thread pool, importmap-rails, turbo-rails, stimulus-rails, tailwindcss-rails, jbuilder, propshaft. Everything else in a Gemfile is either infrastructure (never enters the analysis) or unknown. |
 
 ## What is not lowered, anywhere
 

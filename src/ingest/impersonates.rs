@@ -5,14 +5,17 @@
 //! Recognized shape: `impersonates :scope` with no kwargs. When the
 //! controller already defines `current_<scope>`, that body is renamed
 //! to `true_<scope>` and wrapped. When it does not (Devise may supply
-//! `current_<scope>` only as a typed seam), a session-backed
-//! `true_<scope>` is synthesized so the pretender surface still exists.
-//! Unsupported kwargs leave the call as `Unknown` for the survey.
-//! ActionCable `impersonates` is a different host and is not handled here.
+//! `current_<scope>` only as a typed seam), an empty `true_<scope>` is
+//! synthesized so the pretender surface still exists — no invented host
+//! session key. Unsupported kwargs leave the call as `Unknown` for the
+//! survey. ActionCable `impersonates` is a different host and is not
+//! handled here.
 
 use crate::dialect::{Controller, ControllerBodyItem};
 use crate::expr::{Expr, ExprNode, Literal};
 use crate::ident::Symbol;
+
+use super::controller_macro_synth::{push_action, reingest_controller_body};
 
 struct Impersonation {
     scope: String,
@@ -37,31 +40,14 @@ pub fn lower_impersonates(app: &mut crate::App) {
             }
         }
         let src = method_source(&imp, !renamed);
-        let class_src = format!(
-            "class {} < ApplicationController\n{}\nend\n",
+        let Some(parsed_body) = reingest_controller_body(
             controller.name.0.as_str(),
-            src
-        );
-        let (result, diags) = crate::ingest::prism::scope(|| {
-            super::controller::ingest_controller(class_src.as_bytes(), "<impersonates>")
-        });
-        let parsed = match (result, diags.is_empty()) {
-            (Ok(Some(c)), true) => c,
-            (Ok(None), true) => continue,
-            (Ok(_), false) => {
-                super::survey::record_synthesis_failure(
-                    "<impersonates>",
-                    &format!("impersonates forwarder for `{}`", controller.name.0.as_str()),
-                    &diags,
-                );
-                continue;
-            }
-            (Err(err), _) => {
-                super::survey::record(&err);
-                continue;
-            }
+            "<impersonates>",
+            &src,
+        ) else {
+            continue;
         };
-        for item in parsed.body {
+        for item in parsed_body {
             match item {
                 ControllerBodyItem::Action { action, .. } => {
                     if renamed && action.name.as_str() == true_name {
@@ -76,11 +62,7 @@ pub fn lower_impersonates(app: &mut crate::App) {
                             )
                         });
                     }
-                    controller.body.push(ControllerBodyItem::Action {
-                        action,
-                        leading_comments: Vec::new(),
-                        leading_blank_line: true,
-                    });
+                    push_action(controller, action);
                 }
                 ControllerBodyItem::Unknown { expr, .. } => {
                     if is_helper_method_true_user(&expr, &true_name) {

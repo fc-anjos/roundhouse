@@ -11,6 +11,8 @@ use crate::dialect::{Controller, ControllerBodyItem, Filter, FilterKind};
 use crate::expr::{Expr, ExprNode, Literal};
 use crate::ident::Symbol;
 
+use super::controller_macro_synth::{append_private_actions, expr_symbol_list};
+
 struct Captcha {
     method: String,
     only: Vec<Symbol>,
@@ -28,52 +30,7 @@ pub fn lower_invisible_captcha(app: &mut crate::App) {
         for c in &captchas {
             methods.push_str(&method_source(c));
         }
-        let src = format!(
-            "class {} < ApplicationController\n  private\n{}end\n",
-            controller.name.0.as_str(),
-            methods
-        );
-        let (result, diags) = crate::ingest::prism::scope(|| {
-            super::controller::ingest_controller(src.as_bytes(), "<invisible_captcha>")
-        });
-        let parsed = match (result, diags.is_empty()) {
-            (Ok(Some(c)), true) => c,
-            (Ok(None), true) => continue,
-            (Ok(_), false) => {
-                super::survey::record_synthesis_failure(
-                    "<invisible_captcha>",
-                    &format!(
-                        "invisible_captcha forwarder for `{}`",
-                        controller.name.0.as_str()
-                    ),
-                    &diags,
-                );
-                continue;
-            }
-            (Err(err), _) => {
-                super::survey::record(&err);
-                continue;
-            }
-        };
-        let has_private_marker = controller
-            .body
-            .iter()
-            .any(|item| matches!(item, ControllerBodyItem::PrivateMarker { .. }));
-        if !has_private_marker {
-            controller.body.push(ControllerBodyItem::PrivateMarker {
-                leading_comments: Vec::new(),
-                leading_blank_line: true,
-            });
-        }
-        for item in parsed.body {
-            if let ControllerBodyItem::Action { action, .. } = item {
-                controller.body.push(ControllerBodyItem::Action {
-                    action,
-                    leading_comments: Vec::new(),
-                    leading_blank_line: true,
-                });
-            }
-        }
+        let _ = append_private_actions(controller, "<invisible_captcha>", &methods);
     }
 }
 
@@ -165,8 +122,8 @@ fn captcha_from_call(call: &Expr) -> Option<Captcha> {
                 return None;
             };
             match key.as_str() {
-                "only" => only = symbol_list(v)?,
-                "except" => except = symbol_list(v)?,
+                "only" => only = expr_symbol_list(v)?,
+                "except" => except = expr_symbol_list(v)?,
                 "prepend" => {
                     let ExprNode::Lit {
                         value: Literal::Bool { value: flag },
@@ -186,22 +143,4 @@ fn captcha_from_call(call: &Expr) -> Option<Captcha> {
         except,
         prepend,
     })
-}
-
-fn symbol_list(v: &Expr) -> Option<Vec<Symbol>> {
-    match &*v.node {
-        ExprNode::Lit {
-            value: Literal::Sym { value },
-        } => Some(vec![value.clone()]),
-        ExprNode::Array { elements, .. } => elements
-            .iter()
-            .map(|e| match &*e.node {
-                ExprNode::Lit {
-                    value: Literal::Sym { value },
-                } => Some(value.clone()),
-                _ => None,
-            })
-            .collect(),
-        _ => None,
-    }
 }

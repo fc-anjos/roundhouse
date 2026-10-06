@@ -58,6 +58,8 @@ use crate::dialect::{Controller, ControllerBodyItem, Filter, FilterKind};
 use crate::expr::{Expr, ExprNode, Literal};
 use crate::ident::Symbol;
 
+use super::controller_macro_synth::{append_private_actions, expr_symbol_list};
+
 struct Limit {
     method: String,
     to_src: String,
@@ -82,54 +84,7 @@ pub fn lower_rate_limit(app: &mut crate::App) {
         for l in &limits {
             methods.push_str(&method_source(l));
         }
-        let src = format!(
-            "class {} < ApplicationController\n  private\n{}end\n",
-            controller.name.0.as_str(),
-            methods
-        );
-        // Isolated in its own `prism::scope` — never the outer one
-        // that spans the whole app's ingest — so a bug in the
-        // generated method source can't render its parse errors
-        // against an unrelated real file (see `ingest::sources`'s
-        // module doc).
-        let (result, diags) = crate::ingest::prism::scope(|| {
-            super::controller::ingest_controller(src.as_bytes(), "<rate_limit>")
-        });
-        let parsed = match (result, diags.is_empty()) {
-            (Ok(Some(c)), true) => c,
-            (Ok(None), true) => continue,
-            (Ok(_), false) => {
-                super::survey::record_synthesis_failure(
-                    "<rate_limit>",
-                    &format!("rate_limit forwarder for `{}`", controller.name.0.as_str()),
-                    &diags,
-                );
-                continue;
-            }
-            (Err(err), _) => {
-                super::survey::record(&err);
-                continue;
-            }
-        };
-        let has_private_marker = controller
-            .body
-            .iter()
-            .any(|item| matches!(item, ControllerBodyItem::PrivateMarker { .. }));
-        if !has_private_marker {
-            controller.body.push(ControllerBodyItem::PrivateMarker {
-                leading_comments: Vec::new(),
-                leading_blank_line: true,
-            });
-        }
-        for item in parsed.body {
-            if let ControllerBodyItem::Action { action, .. } = item {
-                controller.body.push(ControllerBodyItem::Action {
-                    action,
-                    leading_comments: Vec::new(),
-                    leading_blank_line: true,
-                });
-            }
-        }
+        let _ = append_private_actions(controller, "<rate_limit>", &methods);
     }
 }
 
@@ -230,8 +185,8 @@ fn limit_from_call(call: &Expr, controller_path: &str) -> Option<Limit> {
             // one budget: a symbol, a string, or a call such as
             // `OtherController.controller_path`.
             "scope" => scope_src = Some(scope_source(v)?),
-            "only" => only = symbol_list(v)?,
-            "except" => except = symbol_list(v)?,
+            "only" => only = expr_symbol_list(v)?,
+            "except" => except = expr_symbol_list(v)?,
             "if" => match &*v.node {
                 ExprNode::Lit { value: Literal::Sym { value } } => if_cond = Some(value.clone()),
                 // The guard evaluates the predicate. Storing the lambda
@@ -374,21 +329,6 @@ fn ruby_string_literal(s: &str) -> String {
         i += 1;
     }
     format!("\"{out}\"")
-}
-
-/// `:create` / `[:create, :update]` → the names; anything else → None.
-fn symbol_list(v: &Expr) -> Option<Vec<Symbol>> {
-    match &*v.node {
-        ExprNode::Lit { value: Literal::Sym { value } } => Some(vec![value.clone()]),
-        ExprNode::Array { elements, .. } => elements
-            .iter()
-            .map(|e| match &*e.node {
-                ExprNode::Lit { value: Literal::Sym { value } } => Some(value.clone()),
-                _ => None,
-            })
-            .collect(),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

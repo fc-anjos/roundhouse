@@ -11,15 +11,18 @@
 # honeypot names rotate; we recognize the common published defaults.
 # Timestamp / spinner / custom `on_spam` callbacks are not modeled —
 # unsupported kwargs leave the class-body macro as a survey gap.
+#
+# Reads through `Params.str` / `Params.provided` so the body stays
+# concretely typed (same posture as pagination's `?page=` read).
+require_relative "../params"
+
 module ActionController
   module InvisibleCaptcha
     HONEYPOTS = %w[subtitle url website email_confirm].freeze
 
     def self.spam?(params)
-      return false if params.nil?
       HONEYPOTS.any? do |name|
-        value = params[name] || params[name.to_sym]
-        !(value.nil? || value.to_s.empty?)
+        Params.provided(params, name) && !Params.str(params, name, "").empty?
       end
     end
   end
