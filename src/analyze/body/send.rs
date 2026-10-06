@@ -318,7 +318,6 @@ impl<'a> BodyTyper<'a> {
             return self.block_params_for(Some(&as_array), method);
         }
         match recv_ty {
-            Ty::Str if method.as_str() == "bytes" => Some(vec![Ty::Int]),
             Ty::Array { elem } => match method.as_str() {
                 "each" | "map" | "collect" | "flat_map" | "collect_concat"
                 | "select" | "filter" | "reject"
@@ -1462,7 +1461,6 @@ impl<'a> BodyTyper<'a> {
             Some(Ty::Record { row }) => record_method(method, row, args),
             // A method the app adds by reopening `String` (campfire's
             // `all_emoji?`) answers where the builtin table has nothing.
-            Some(Ty::Str) if method.as_str() == "bytes" && block_ret.is_some() => Ty::Str,
             Some(Ty::Str) => match str_method(method) {
                 Ty::Var { .. } => self
                     .lookup_string_instance(method)
@@ -2445,8 +2443,7 @@ pub(super) fn str_method(method: &Symbol) -> Ty {
         "=~" => Ty::Union { variants: vec![Ty::Int, Ty::Nil] },
         // `index`/`rindex` → the substring position or nil.
         "index" | "rindex" => Ty::Union { variants: vec![Ty::Int, Ty::Nil] },
-        "bytes" => Ty::Array { elem: Box::new(Ty::Int) },
-        "chars" | "lines" | "split" | "scan" => Ty::Array { elem: Box::new(Ty::Str) },
+        "chars" | "lines" | "split" | "bytes" | "scan" => Ty::Array { elem: Box::new(Ty::Str) },
         "empty?" | "blank?" | "present?" | "include?" | "start_with?"
         | "end_with?" | "match?" => Ty::Bool,
         // ActiveSupport `Object#presence_in(collection)` — the receiver
