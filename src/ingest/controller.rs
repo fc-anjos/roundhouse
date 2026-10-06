@@ -14,7 +14,7 @@ use crate::{ClassId, Symbol};
 use super::expr::ingest_expr;
 use super::util::{
     class_name_path, collect_comments, constant_id_str, constant_path_of, drain_comments_before,
-    find_all_classes_with_nesting, find_first_class, flatten_statements, source_has_blank_line,
+    find_all_classes_with_nesting, flatten_statements, source_has_blank_line,
     symbol_list_style, symbol_list_value, symbol_value,
 };
 use super::{IngestError, IngestResult};
@@ -43,8 +43,9 @@ pub(super) fn ingest_controller_with_nesting(
     // is the class whose name ends in `Controller`, not the first
     // class in the file; picking the first ingests an empty error
     // class as the controller and drops every real action (so its
-    // view ivars never resolve). Fall back to the first class when no
-    // name matches the convention.
+    // view ivars never resolve). Fall back to a TOP-LEVEL class when
+    // no name matches the convention; a nested class under a module
+    // is handled below (controller concerns nest value objects).
     let all_classes = find_all_classes_with_nesting(&root);
     let chosen_idx = all_classes.iter().position(|(_, _, c)| {
         class_name_path(c)
@@ -93,10 +94,22 @@ pub(super) fn ingest_controller_with_nesting(
             let (s, n, c) = all_classes.into_iter().nth(i).expect("chosen index in range");
             (s, n, Some(c))
         }
-        None => match all_classes.into_iter().next() {
-            Some((s, n, c)) => (s, n, Some(c)),
-            None => (Vec::new(), Vec::new(), find_first_class(&root)),
-        },
+        None => {
+            // Fall back only for a TOP-LEVEL class whose name does not
+            // follow the *Controller convention. A class nested under a
+            // module is not a controller just because the file lives
+            // under `app/controllers/`: controller concerns put value
+            // objects there (`module Window; class Span < T::Struct`),
+            // and treating the nested class as the controller both
+            // invents a fake controller — its `const` / `prop` become
+            // unrecognized class-body macros — and skips the concern
+            // path that would register the enclosing module. Returning
+            // `None` here lets that path run.
+            match all_classes.into_iter().find(|(scope, _, _)| scope.is_empty()) {
+                Some((s, n, c)) => (s, n, Some(c)),
+                None => (Vec::new(), Vec::new(), None),
+            }
+        }
     };
     let Some(class) = class else {
         return Ok(None);

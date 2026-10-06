@@ -2794,6 +2794,22 @@ fn report_unrecognized_controller_macros(app: &App) {
             if CONSUMED_CONTROLLER_MACROS.contains(&method.as_str()) {
                 continue;
             }
+            // `const` / `prop` belong to a lowered `T::Struct` (or a
+            // gem base the sidecar expands). On a real controller they
+            // are leftover Sorbet props with no runtime in the emitted
+            // tree — name that, rather than the generic "macro not
+            // recognized" bucket that also covers unmodeled app DSL.
+            if matches!(method.as_str(), "const" | "prop") {
+                survey::record(&IngestError::Unsupported {
+                    file: super::sources::path_of(expr.span.file)
+                        .unwrap_or_else(|| controller.name.0.as_str().to_string()),
+                    message: format!(
+                        "Sorbet `{}` outside a lowered T::Struct (its effect is dropped from the output)",
+                        method.as_str()
+                    ),
+                });
+                continue;
+            }
             // `before_action -> { … }, only: […]` (233 controllers) and
             // its `prepend_before_action`/`after_action` siblings — a
             // lambda/proc argument target instead of a Symbol, with no

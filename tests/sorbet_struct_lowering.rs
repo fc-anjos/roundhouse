@@ -260,3 +260,69 @@ end
     assert!(emitted.contains("def amount"), "got:\n{emitted}");
     assert!(!emitted.contains("const :amount"), "got:\n{emitted}");
 }
+
+/// A `T::Struct` nested in a controller concern lowers the same way as
+/// one under `app/services`. The concern file must take the module
+/// ingest path — otherwise the nested class is mistaken for a
+/// controller and the declarations never reach this lowering.
+#[test]
+fn a_t_struct_nested_in_a_controller_concern_lowers() {
+    let tree: HashMap<PathBuf, Vec<u8>> = [
+        (
+            "db/schema.rb",
+            "ActiveRecord::Schema.define do\n  create_table \"sightings\", force: :cascade do |t|\n    t.string \"target\", null: false\n  end\nend\n",
+        ),
+        ("app/models/application_record.rb", "class ApplicationRecord < ActiveRecord::Base\nend\n"),
+        (
+            "app/controllers/application_controller.rb",
+            "class ApplicationController < ActionController::Base\nend\n",
+        ),
+        (
+            "app/controllers/concerns/window_settings.rb",
+            r#"module WindowSettings
+  extend ActiveSupport::Concern
+
+  class Span < T::Struct
+    const :from_date, String
+    const :to_date, String
+    prop :label, String, default: "window"
+  end
+
+  def window
+    Span.new(from_date: "2026-01-01", to_date: "2026-01-31")
+  end
+end
+"#,
+        ),
+        (
+            "app/controllers/reports_controller.rb",
+            "class ReportsController < ApplicationController\n  include WindowSettings\n  def show; end\nend\n",
+        ),
+        (
+            "config/routes.rb",
+            "Rails.application.routes.draw do\n  get \"/reports\", to: \"reports#show\"\nend\n",
+        ),
+    ]
+    .into_iter()
+    .map(|(p, c)| (PathBuf::from(p), c.as_bytes().to_vec()))
+    .collect();
+    let mut app = ingest_app_from_tree(tree).expect("ingest");
+    roundhouse::session::analyze_and_lower(&mut app);
+    let emitted = ruby::emit_library(&app)
+        .into_iter()
+        .find(|f| f.path.display().to_string().contains("window_settings"))
+        .map(|f| f.content)
+        .unwrap_or_else(|| panic!("window_settings is emitted"));
+    assert!(!emitted.contains("T::Struct"), "got:\n{emitted}");
+    assert!(!emitted.contains("const :"), "got:\n{emitted}");
+    assert!(emitted.contains("def from_date"), "got:\n{emitted}");
+    assert!(emitted.contains("def to_date"), "got:\n{emitted}");
+    assert!(emitted.contains("def label="), "got:\n{emitted}");
+    assert!(
+        emitted.contains("def initialize(from_date:, to_date:, label: \"window\")")
+            || (emitted.contains("from_date:")
+                && emitted.contains("to_date:")
+                && emitted.contains("label:")),
+        "keyword constructor; got:\n{emitted}"
+    );
+}
