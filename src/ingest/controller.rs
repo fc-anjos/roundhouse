@@ -23,6 +23,22 @@ pub fn ingest_controller(source: &[u8], file: &str) -> IngestResult<Option<Contr
     Ok(ingest_controller_with_nesting(source, file)?.map(|(controller, _)| controller))
 }
 
+/// `T::Struct` (and its siblings) in superclass position — a class
+/// generator, not a controller base. Used when choosing a fallback
+/// controller class so a concern-nested value object is not mistaken
+/// for the controller of the file.
+fn is_sorbet_struct_superclass(class: &ruby_prism::ClassNode<'_>) -> bool {
+    class
+        .superclass()
+        .and_then(|n| constant_path_of(&n))
+        .is_some_and(|p| {
+            matches!(
+                p.join("::").as_str(),
+                "T::Struct" | "T::ImmutableStruct" | "T::InexactStruct"
+            )
+        })
+}
+
 /// `ingest_controller`, plus the lexical nesting the superclass is
 /// looked up in (`Module.nesting` at the `class` keyword, innermost
 /// first). `Controller` doesn't carry it, and the name can't stand in
@@ -43,9 +59,8 @@ pub(super) fn ingest_controller_with_nesting(
     // is the class whose name ends in `Controller`, not the first
     // class in the file; picking the first ingests an empty error
     // class as the controller and drops every real action (so its
-    // view ivars never resolve). Fall back to a TOP-LEVEL class when
-    // no name matches the convention; a nested class under a module
-    // is handled below (controller concerns nest value objects).
+    // view ivars never resolve). Fall back is refined below: skip
+    // Sorbet struct generators so concern-nested VOs do not win.
     let all_classes = find_all_classes_with_nesting(&root);
     let chosen_idx = all_classes.iter().position(|(_, _, c)| {
         class_name_path(c)
@@ -95,17 +110,16 @@ pub(super) fn ingest_controller_with_nesting(
             (s, n, Some(c))
         }
         None => {
-            // Fall back only for a TOP-LEVEL class whose name does not
-            // follow the *Controller convention. A class nested under a
-            // module is not a controller just because the file lives
-            // under `app/controllers/`: controller concerns put value
-            // objects there (`module Window; class Span < T::Struct`),
-            // and treating the nested class as the controller both
-            // invents a fake controller — its `const` / `prop` become
-            // unrecognized class-body macros — and skips the concern
-            // path that would register the enclosing module. Returning
-            // `None` here lets that path run.
-            match all_classes.into_iter().find(|(scope, _, _)| scope.is_empty()) {
+            // No *Controller name: fall back to the first class that is
+            // not a Sorbet value-object generator. Nested
+            // `class Base < ApplicationController` must stay a
+            // controller (filter ancestry); concern-nested
+            // `class Span < T::Struct` must not — inventing a fake
+            // controller turns `const`/`prop` into unrecognized macros
+            // and skips the concern path for the enclosing module.
+            // Returning `None` when every class is a Sorbet struct lets
+            // that path run.
+            match all_classes.into_iter().find(|(_, _, c)| !is_sorbet_struct_superclass(c)) {
                 Some((s, n, c)) => (s, n, Some(c)),
                 None => (Vec::new(), Vec::new(), None),
             }

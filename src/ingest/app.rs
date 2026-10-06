@@ -1166,12 +1166,13 @@ end
                         app.library_classes.extend(nested_under(&outer, classes));
                     }
                 } else {
-                    // No class in the file — a module: a concern under
-                    // app/controllers/concerns/ (`AccountOwnedConcern`)
-                    // or a mixin like `Authorization`. Ingest as a
-                    // library class so its methods register and
+                    // Not a controller file: a module-only concern under
+                    // app/controllers/concerns/, a mixin like
+                    // `Authorization`, or a concern whose only classes
+                    // are Sorbet value objects (nested `T::Struct`).
+                    // Ingest as library classes so methods register and
                     // `include X` dispatch (ClassInfo.includes) can
-                    // resolve into it, and capture its `included do`
+                    // resolve into them, and capture `included do`
                     // filter declarations for every includer's chain.
                     if let Some(classes) =
                         unwrap_or_record(ingest_library_classes(&source, &path_str))?

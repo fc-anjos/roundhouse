@@ -197,4 +197,37 @@ end
             || g.contains("Sorbet `const`")),
         "const must not be a survey gap once the struct is lowered; gaps = {messages:?}"
     );
+    assert!(
+        app.controllers.iter().any(|c| c.name.0.as_str() == "ReportsController"),
+        "the real controller is still there"
+    );
+}
+
+/// A bare `const` on a real `*Controller` is leftover Sorbet props with
+/// no runtime in the emitted tree. The survey names that specifically,
+/// rather than folding it into the generic unrecognized-macro bucket.
+#[test]
+fn leftover_const_on_a_real_controller_earns_a_sorbet_survey_line() {
+    use roundhouse::ingest::survey;
+
+    survey::activate();
+    let app = app_with(vec![(
+        "app/controllers/reports_controller.rb",
+        "class ReportsController < ApplicationController\n  const :label, String\n  def show; end\nend\n"
+            .to_string(),
+    )]);
+    assert!(
+        app.controllers.iter().any(|c| c.name.0.as_str() == "ReportsController"),
+        "the controller still ingests"
+    );
+    let gaps = survey::drain();
+    let messages: Vec<_> = gaps.iter().map(ToString::to_string).collect();
+    assert!(
+        messages.iter().any(|m| m.contains("Sorbet `const` outside a lowered T::Struct")),
+        "leftover const must earn the Sorbet-specific line: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("controller class-body macro not recognized: `const`")),
+        "must not use the generic macro bucket: {messages:?}"
+    );
 }

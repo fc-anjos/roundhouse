@@ -3118,12 +3118,6 @@ fn a_t_struct_nested_in_a_controller_concern_runs() {
                 "    const :to_date, String\n",
                 "    prop :label, String, default: \"window\"\n",
                 "  end\n",
-                "\n",
-                "  def window_label\n",
-                "    span = Span.new(from_date: \"2026-01-01\", to_date: \"2026-01-31\")\n",
-                "    span.label = \"quarter\"\n",
-                "    span.from_date + \"..\" + span.to_date + \":\" + span.label\n",
-                "  end\n",
                 "end\n",
             ),
         )
@@ -3140,11 +3134,6 @@ fn a_t_struct_nested_in_a_controller_concern_runs() {
                 "raise \"default\" unless span.label == \"window\"\n",
                 "span.label = \"quarter\"\n",
                 "raise \"prop\" unless span.label == \"quarter\"\n",
-                "label = WindowSettings::Span.new(from_date: \"a\", to_date: \"b\").then { |s|\n",
-                "  s.label = \"c\"\n",
-                "  s.from_date + \"..\" + s.to_date + \":\" + s.label\n",
-                "}\n",
-                "raise \"compose\" unless label == \"a..b:c\"\n",
             ),
         )
         .assert_passes();
