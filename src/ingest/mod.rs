@@ -25,6 +25,8 @@ pub mod controller;
 pub mod expr;
 pub mod fixture;
 pub(crate) mod forwarding;
+pub mod impersonates;
+pub mod invisible_captcha;
 pub mod jbuilder;
 pub mod library_class;
 pub mod channel_callbacks;

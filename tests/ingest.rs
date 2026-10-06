@@ -358,11 +358,11 @@ end
 
 #[test]
 fn routes_recover_per_entry_under_survey() {
-    // One unknown DSL entry (`devise_for`) must not zero the table:
-    // survey mode records the gap and keeps the sibling routes;
-    // strict mode still fails loud so fixtures force recognizers.
+    // One unknown DSL entry must not zero the table: survey mode
+    // records the gap and keeps the sibling routes; strict mode still
+    // fails loud so fixtures force recognizers.
     let source = br#"Rails.application.routes.draw do
-  devise_for :users
+  use_doorkeeper
   get "/posts", to: "posts#index"
 end
 "#;
@@ -380,9 +380,92 @@ end
     let table = result.expect("survey ingest recovers");
     assert_eq!(table.entries.len(), 1, "the good route survives");
     assert!(
-        gaps.iter().any(|g| format!("{g:?}").contains("devise_for")),
-        "the devise_for gap is recorded, not silently dropped: {gaps:?}"
+        gaps.iter().any(|g| format!("{g:?}").contains("use_doorkeeper")),
+        "the unknown-DSL gap is recorded, not silently dropped: {gaps:?}"
     );
+}
+
+#[test]
+fn devise_scope_and_authenticated_passthrough_nested_routes() {
+    let source = br#"Rails.application.routes.draw do
+  authenticated :user, lambda { |u| u.admin? } do
+    namespace :admin do
+      resources :users, only: [:index]
+      root to: "dashboard#show"
+    end
+  end
+  devise_scope :user do
+    get "session/otp", to: "sessions#otp"
+  end
+  authenticated :user do
+    root to: "dashboard#show", as: :user_root
+  end
+end
+"#;
+    roundhouse::ingest::survey::activate();
+    let (result, _) = roundhouse::ingest::prism::scope(|| {
+        roundhouse::ingest::ingest_routes(source, "config/routes.rb")
+    });
+    let gaps = roundhouse::ingest::survey::drain();
+    let table = result.expect("ingest");
+    assert!(
+        gaps.iter().all(|g| {
+            let s = format!("{g:?}");
+            !s.contains("authenticated") && !s.contains("devise_scope")
+        }),
+        "Devise wrappers must not survey: {gaps:?}"
+    );
+    let mut app = roundhouse::App::default();
+    app.routes = table;
+    let flat = roundhouse::lower::flatten_routes(&app);
+    assert!(
+        flat.iter().any(|r| r.path == "/admin/users" && r.as_name == "admin_users"),
+        "authenticated nested resources: {flat:?}"
+    );
+    assert!(
+        flat.iter().any(|r| r.path == "/session/otp" && r.controller.0.as_str() == "SessionsController"),
+        "devise_scope nested route: {flat:?}"
+    );
+    assert!(
+        flat.iter().any(|r| r.as_name == "user_root"),
+        "authenticated root as: :user_root: {flat:?}"
+    );
+}
+
+#[test]
+fn devise_for_expands_session_and_registration_helpers() {
+    let source = br#"Rails.application.routes.draw do
+  devise_for :users,
+    controllers: {
+      registrations: "users/registrations",
+      sessions: "users/sessions"
+    }
+end
+"#;
+    roundhouse::ingest::survey::activate();
+    let (result, _) = roundhouse::ingest::prism::scope(|| {
+        roundhouse::ingest::ingest_routes(source, "config/routes.rb")
+    });
+    let gaps = roundhouse::ingest::survey::drain();
+    let table = result.expect("ingest");
+    assert!(
+        gaps.iter().all(|g| !format!("{g:?}").contains("devise_for")),
+        "devise_for must not survey: {gaps:?}"
+    );
+    let mut app = roundhouse::App::default();
+    app.routes = table;
+    let flat = roundhouse::lower::flatten_routes(&app);
+    let by_name: std::collections::HashMap<_, _> =
+        flat.iter().map(|r| (r.as_name.as_str(), r)).collect();
+    let session = by_name.get("new_user_session").expect("new_user_session");
+    assert_eq!(session.path, "/users/sign_in");
+    assert_eq!(session.controller.0.as_str(), "Users::SessionsController");
+    let reg = by_name.get("new_user_registration").expect("new_user_registration");
+    assert_eq!(reg.path, "/users/sign_up");
+    assert_eq!(reg.controller.0.as_str(), "Users::RegistrationsController");
+    assert!(by_name.contains_key("destroy_user_session"));
+    assert!(by_name.contains_key("edit_user_password"));
+    assert!(by_name.contains_key("user_confirmation"));
 }
 
 #[test]
