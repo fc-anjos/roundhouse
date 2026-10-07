@@ -2854,6 +2854,16 @@ fn report_unrecognized_controller_macros(app: &App) {
         return;
     }
     for controller in &app.controllers {
+        // `sources::drain` already ran before this reporter; resolve
+        // against the snapshot on `app`, not the emptied thread-local
+        // registry (`sources::path_of` would always miss).
+        let file_of = |file_id: crate::span::FileId| {
+            (file_id.0 as usize)
+                .checked_sub(1)
+                .and_then(|i| app.sources.get(i))
+                .map(|s| s.path.clone())
+                .unwrap_or_else(|| controller.name.0.as_str().to_string())
+        };
         for item in &controller.body {
             let ControllerBodyItem::Unknown { expr, .. } = item else { continue };
             let ExprNode::Send { recv: None, method, block: None, .. } = &*expr.node else {
@@ -2869,8 +2879,7 @@ fn report_unrecognized_controller_macros(app: &App) {
             // recognized" bucket that also covers unmodeled app DSL.
             if matches!(method.as_str(), "const" | "prop") {
                 survey::record(&IngestError::Unsupported {
-                    file: super::sources::path_of(expr.span.file)
-                        .unwrap_or_else(|| controller.name.0.as_str().to_string()),
+                    file: file_of(expr.span.file),
                     message: format!(
                         "Sorbet `{}` outside a lowered T::Struct (its effect is dropped from the output)",
                         method.as_str()
@@ -2890,8 +2899,7 @@ fn report_unrecognized_controller_macros(app: &App) {
             if super::controller::lambda_filter_target(expr).is_some() {
                 continue;
             }
-            let file = super::sources::path_of(expr.span.file)
-                .unwrap_or_else(|| controller.name.0.as_str().to_string());
+            let file = file_of(expr.span.file);
             if REFINEMENT_MACROS.contains(&method.as_str()) {
                 // `using SomeRefinement` — name the refinement in the
                 // ledger so the gap is actionable, rather than folding

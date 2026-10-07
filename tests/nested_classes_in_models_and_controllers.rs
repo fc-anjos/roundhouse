@@ -223,8 +223,11 @@ fn leftover_const_on_a_real_controller_earns_a_sorbet_survey_line() {
     let gaps = survey::drain();
     let messages: Vec<_> = gaps.iter().map(ToString::to_string).collect();
     assert!(
-        messages.iter().any(|m| m.contains("Sorbet `const` outside a lowered T::Struct")),
-        "leftover const must earn the Sorbet-specific line: {messages:?}"
+        messages.iter().any(|m| {
+            m.contains("Sorbet `const` outside a lowered T::Struct")
+                && m.contains("app/controllers/reports_controller.rb")
+        }),
+        "leftover const must earn the Sorbet-specific line with the source path: {messages:?}"
     );
     assert!(
         !messages.iter().any(|m| m.contains("controller class-body macro not recognized: `const`")),
