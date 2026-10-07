@@ -360,10 +360,11 @@ fn each_spelling_inherits_its_own_base_filters() {
 }
 
 /// A nested base that does NOT end in `Controller` still participates
-/// in the filter ancestry. Skipping every nested class when choosing a
-/// fallback controller would ingest `Admin::Base` as a library class,
-/// leave the child's parent unqualified, and drop `admin_gate` (and
-/// ApplicationController filters) from the emitted dispatcher.
+/// in the filter ancestry. The fallback must pick the first class that
+/// descends from a controller — not merely “not a T::Struct” — so a
+/// non-Sorbet decoy ahead of `Base` does not steal the selection and
+/// drop `admin_gate` (and ApplicationController filters) from the
+/// emitted dispatcher.
 #[test]
 fn a_nested_base_without_controller_suffix_still_contributes_filters() {
     let tree: HashMap<PathBuf, Vec<u8>> = [
@@ -374,6 +375,9 @@ fn a_nested_base_without_controller_suffix_still_contributes_filters() {
         (
             "app/controllers/admin/base.rb",
             br#"module Admin
+  class RedirectPlan < StandardError
+  end
+
   class Base < ApplicationController
     before_action :admin_gate
 

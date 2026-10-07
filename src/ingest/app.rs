@@ -2854,13 +2854,10 @@ fn report_unrecognized_controller_macros(app: &App) {
         return;
     }
     for controller in &app.controllers {
-        // `sources::drain` already ran before this reporter; resolve
-        // against the snapshot on `app`, not the emptied thread-local
-        // registry (`sources::path_of` would always miss).
+        // `sources::drain` already ran; use the App snapshot via the
+        // canonical FileId helper (thread-local `sources::path_of` misses).
         let file_of = |file_id: crate::span::FileId| {
-            (file_id.0 as usize)
-                .checked_sub(1)
-                .and_then(|i| app.sources.get(i))
+            crate::ide::source(app, file_id)
                 .map(|s| s.path.clone())
                 .unwrap_or_else(|| controller.name.0.as_str().to_string())
         };
