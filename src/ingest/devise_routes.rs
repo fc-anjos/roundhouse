@@ -1,11 +1,14 @@
 //! `devise_for :users[, controllers: { … }]` → a static Devise route table.
 //!
-//! Expands sessions / registrations / passwords / confirmations (paths and
-//! helper names match Devise defaults). Controllers default to
+//! Expands the **default four** Devise mappings — sessions, registrations,
+//! passwords, confirmations — matching stock Devise helpers/paths. This is
+//! not driven by the model's `devise :module, …` list; `skip:` / `only:`
+//! fail loud instead of silently narrowing. Controllers default to
 //! `devise/<mapping>` (`Devise::SessionsController`, …); `controllers:`
-//! overrides replace per mapping. Does not model Warden, OmniAuth callback
-//! routes, or Devise controller bodies. Unsupported options (`skip:`,
-//! `only:`, `path:`, `module:`, …) fail loud.
+//! overrides replace per mapping, and keys outside the four modeled
+//! mappings fail loud (no silent OmniAuth accept-then-ignore). Does not
+//! model Warden, OmniAuth callback routes, or Devise controller bodies.
+//! Unsupported options (`skip:`, `only:`, `path:`, `module:`, …) fail loud.
 
 use std::collections::HashMap;
 
@@ -28,6 +31,11 @@ struct DeviseRoute {
     action: &'static str,
     as_name: &'static str,
 }
+
+/// Mappings this expansion emits routes for. Any other `controllers:`
+/// key (e.g. `omniauth_callbacks`) is Unsupported — accepted into a map
+/// and then ignored would hide a real gap.
+const MODELED_MAPPINGS: &[&str] = &["sessions", "registrations", "passwords", "confirmations"];
 
 const DEVISE_ROUTES: &[DeviseRoute] = &[
     // Sessions (database_authenticatable)
@@ -244,6 +252,15 @@ pub(super) fn ingest_devise_for(
                                 ),
                             });
                         };
+                        if !MODELED_MAPPINGS.contains(&ck.as_str()) {
+                            return Err(IngestError::Unsupported {
+                                file: file.into(),
+                                message: format!(
+                                    "unsupported devise_for controllers: `{ck}` \
+                                     (modeled: sessions, registrations, passwords, confirmations)"
+                                ),
+                            });
+                        }
                         controllers.insert(ck, cv);
                     }
                 }

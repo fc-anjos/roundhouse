@@ -511,6 +511,25 @@ end
 }
 
 #[test]
+fn devise_for_rejects_unmodeled_controller_mappings() {
+    // OmniAuth (and any mapping outside the static four) must fail loud —
+    // accepting the key then emitting no routes would hide the gap.
+    let source = br#"Rails.application.routes.draw do
+  devise_for :users, controllers: { omniauth_callbacks: "users/omniauth_callbacks" }
+end
+"#;
+    let (result, _) = roundhouse::ingest::prism::scope(|| {
+        roundhouse::ingest::ingest_routes(source, "config/routes.rb")
+    });
+    let err = result.expect_err("unmodeled controllers: key must fail");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("omniauth_callbacks") || msg.contains("unsupported devise_for controllers"),
+        "expected unmodeled mapping error, got: {msg}"
+    );
+}
+
+#[test]
 fn devise_for_defaults_controllers_under_devise_module() {
     // Bare `devise_for :users` must resolve to Devise::*Controller, not
     // top-level SessionsController (Devise::Mapping#default_controllers).
