@@ -1395,6 +1395,36 @@ puts "ActiveSupport Date calendar OK"
         .assert_passes();
 }
 
+/// Spinel has no native `Date#+`; grounding must carry constructors,
+/// day arithmetic, and calendar-day `past?` — CRuby stdlib can mask that.
+#[test]
+#[ignore = "requires the Spinel toolchain"]
+fn activesupport_date_calendar_runs_on_spinel() {
+    date_blog()
+        .edit(
+            "app/models/calendar_entry.rb",
+            "\nend\n",
+            "\n  def prior_day\n    due_on.yesterday\n  end\n\n  def self.probe\n    entry = create!(due_on: Date.new(2024, 1, 31))\n    [\n      Date.current.class.name,\n      entry.due_on.beginning_of_month.iso8601,\n      entry.due_on.end_of_month.iso8601,\n      entry.prior_day.iso8601,\n      (Date.new(2024, 1, 31) + 2).iso8601,\n      Date.current.past?,\n      Date.new(2020, 1, 1).past?,\n    ]\n  end\nend\n",
+        )
+        .run_spinel(
+            r#"
+Db.configure(":memory:")
+Schema.statements.each { |sql| Db.exec(sql) }
+ActiveRecord.adapter = SqliteAdapter
+parts = CalendarEntry.probe
+raise "Date.current class: #{parts[0]}" unless parts[0] == "Date"
+raise "beginning_of_month: #{parts[1]}" unless parts[1] == "2024-01-01"
+raise "end_of_month: #{parts[2]}" unless parts[2] == "2024-01-31"
+raise "yesterday: #{parts[3]}" unless parts[3] == "2024-01-30"
+raise "Date+2: #{parts[4]}" unless parts[4] == "2024-02-02"
+raise "today.past?: #{parts[5]}" unless parts[5] == false
+raise "old.past?: #{parts[6]}" unless parts[6] == true
+puts "ActiveSupport Date calendar OK on Spinel"
+"#,
+        )
+        .assert_passes();
+}
+
 /// ActiveSupport's Date calendar extensions and `Date.current`, which
 /// reads today in the app's zone rather than the host's.
 #[test]
