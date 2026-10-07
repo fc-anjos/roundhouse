@@ -54,11 +54,13 @@
 //! carries the `RateLimiter` call as a runtime seam, the posture
 //! `allow_browser`'s concern form already has.
 
-use crate::dialect::{Controller, ControllerBodyItem, Filter, FilterKind};
+use crate::dialect::{Controller, ControllerBodyItem};
 use crate::expr::{Expr, ExprNode, Literal};
 use crate::ident::Symbol;
 
-use super::controller_macro_synth::{append_private_actions, expr_symbol_list};
+use super::controller_macro_synth::{
+    append_private_actions, expr_symbol_list, install_before_filter,
+};
 
 struct Limit {
     method: String,
@@ -76,6 +78,9 @@ struct Limit {
 
 pub fn lower_rate_limit(app: &mut crate::App) {
     for controller in &mut app.controllers {
+        // Snapshot so a failed method synth can restore the macros
+        // instead of leaving orphan before_actions.
+        let snapshot = controller.body.clone();
         let limits = take_from_controller_body(controller);
         if limits.is_empty() {
             continue;
@@ -84,7 +89,9 @@ pub fn lower_rate_limit(app: &mut crate::App) {
         for l in &limits {
             methods.push_str(&method_source(l));
         }
-        let _ = append_private_actions(controller, "<rate_limit>", &methods);
+        if !append_private_actions(controller, "<rate_limit>", &methods) {
+            controller.body = snapshot;
+        }
     }
 }
 
@@ -110,7 +117,7 @@ fn take_from_controller_body(controller: &mut Controller) -> Vec<Limit> {
     );
     let mut found: Vec<Limit> = Vec::new();
     for item in controller.body.iter_mut() {
-        let ControllerBodyItem::Unknown { expr, leading_comments, leading_blank_line } = item else {
+        let ControllerBodyItem::Unknown { expr, .. } = item else {
             continue;
         };
         let Some(mut limit) = limit_from_call(expr, &path) else { continue };
@@ -119,27 +126,17 @@ fn take_from_controller_body(controller: &mut Controller) -> Vec<Limit> {
         if found.iter().any(|f| f.method == limit.method) {
             limit.method = format!("{}_{}", limit.method, found.len() + 1);
         }
-        let f = Filter {
-            target_span: crate::span::Span::synthetic(),
-            kind: FilterKind::Before,
-            target: Symbol::from(limit.method.as_str()),
-            from_concern: None,
-            only: limit.only.clone(),
-            except: limit.except.clone(),
-            only_style: Default::default(),
-            except_style: Default::default(),
-            if_cond: limit.if_cond.clone(),
-            unless_cond: limit.unless_cond.clone(),
-            if_cond_expr: limit.if_cond_expr.clone(),
-            unless_cond_expr: limit.unless_cond_expr.clone(),
-            block: None,
-            prepend: false,
-        };
-        *item = ControllerBodyItem::Filter {
-            filter: f,
-            leading_comments: std::mem::take(leading_comments),
-            leading_blank_line: *leading_blank_line,
-        };
+        install_before_filter(
+            item,
+            &limit.method,
+            limit.only.clone(),
+            limit.except.clone(),
+            false,
+            limit.if_cond.clone(),
+            limit.unless_cond.clone(),
+            limit.if_cond_expr.clone(),
+            limit.unless_cond_expr.clone(),
+        );
         found.push(limit);
     }
     found

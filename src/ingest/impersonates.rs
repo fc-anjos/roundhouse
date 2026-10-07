@@ -12,6 +12,9 @@
 //! is already in the method list, which would recurse. Unsupported
 //! kwargs leave the call as `Unknown` for the survey. ActionCable
 //! `impersonates` is a different host and is not handled here.
+//!
+//! Mutation is atomic: the macro and any rename stay uncommitted until
+//! re-ingest of the synthesized methods succeeds.
 
 use crate::dialect::{Controller, ControllerBodyItem};
 use crate::expr::{Expr, ExprNode, Literal};
@@ -26,33 +29,44 @@ struct Impersonation {
 
 pub fn lower_impersonates(app: &mut crate::App) {
     for controller in &mut app.controllers {
-        let Some(imp) = take_from_controller_body(controller) else {
+        let Some((macro_idx, imp)) = find_impersonation(controller) else {
             continue;
         };
         let current_name = format!("current_{}", imp.scope);
         let true_name = format!("true_{}", imp.scope);
-        let mut renamed = false;
-        for item in controller.body.iter_mut() {
-            if let ControllerBodyItem::Action { action, .. } = item {
-                if action.name.as_str() == current_name {
-                    action.name = Symbol::from(true_name.as_str());
-                    renamed = true;
-                    break;
-                }
-            }
-        }
-        let src = method_source(&imp, !renamed);
+        let has_local = controller.body.iter().any(|item| {
+            matches!(
+                item,
+                ControllerBodyItem::Action { action, .. }
+                    if action.name.as_str() == current_name
+            )
+        });
+        let src = method_source(&imp, !has_local);
         let Some(parsed_body) = reingest_controller_body(
             controller.name.0.as_str(),
             "<impersonates>",
             &src,
         ) else {
+            // Leave the macro and existing methods untouched.
             continue;
         };
+
+        // Commit: drop the macro, rename local current_* → true_*, append synth.
+        controller.body.remove(macro_idx);
+        if has_local {
+            for item in controller.body.iter_mut() {
+                if let ControllerBodyItem::Action { action, .. } = item {
+                    if action.name.as_str() == current_name {
+                        action.name = Symbol::from(true_name.as_str());
+                        break;
+                    }
+                }
+            }
+        }
         for item in parsed_body {
             match item {
                 ControllerBodyItem::Action { action, .. } => {
-                    if renamed && action.name.as_str() == true_name {
+                    if has_local && action.name.as_str() == true_name {
                         continue;
                     }
                     if action.name.as_str() == current_name {
@@ -142,23 +156,17 @@ fn method_source(imp: &Impersonation, synthesize_true_user: bool) -> String {
     out
 }
 
-fn take_from_controller_body(controller: &mut Controller) -> Option<Impersonation> {
-    let mut found: Option<Impersonation> = None;
-    let mut remove_at: Option<usize> = None;
+/// Locate a recognized `impersonates` call without mutating the body.
+fn find_impersonation(controller: &Controller) -> Option<(usize, Impersonation)> {
     for (i, item) in controller.body.iter().enumerate() {
         let ControllerBodyItem::Unknown { expr, .. } = item else {
             continue;
         };
         if let Some(imp) = impersonation_from_call(expr) {
-            found = Some(imp);
-            remove_at = Some(i);
-            break;
+            return Some((i, imp));
         }
     }
-    if let Some(i) = remove_at {
-        controller.body.remove(i);
-    }
-    found
+    None
 }
 
 fn impersonation_from_call(call: &Expr) -> Option<Impersonation> {

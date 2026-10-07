@@ -1984,33 +1984,10 @@ fn ingest_root_route(
         }));
     }
     match target {
-        Some(target) if !target.is_empty() => {
-            // `root to: "c#a", as: :user_root` — when `as:` renames the
-            // helper, emit Explicit so the name is not hard-wired to
-            // `root` the way `RouteSpec::Root` is.
-            if let Some(name) = as_name {
-                let (controller, action) = match target.split_once('#') {
-                    Some((c, a)) => (c.to_string(), a.to_string()),
-                    None => {
-                        return Err(IngestError::Unsupported {
-                            file: file.into(),
-                            message: format!("root target `{target}` is not controller#action"),
-                        });
-                    }
-                };
-                Ok(Some(RouteSpec::Explicit {
-                    method: HttpMethod::Get,
-                    path: "/".to_string(),
-                    controller: ClassId(Symbol::from(controller_class_name(&controller))),
-                    action: Symbol::from(action),
-                    as_name: Some(name),
-                    constraints: IndexMap::new(),
-                    scope: ResourceScope::default(),
-                }))
-            } else {
-                Ok(Some(RouteSpec::Root { target }))
-            }
-        }
+        Some(target) if !target.is_empty() => Ok(Some(RouteSpec::Root {
+            target,
+            as_name,
+        })),
         // Same contract as `mount` and the explicit verbs' redirect
         // drop: not an error, but never silent.
         _ => {
@@ -2207,7 +2184,7 @@ fn ingest_resources_route(
 }
 
 /// `"c"` / `"admin/c"` → `CController` / `Admin::CController`.
-fn controller_class_name(short: &str) -> String {
+pub(super) fn controller_class_name(short: &str) -> String {
     let mut s = short
         .split('/')
         .map(camelize)

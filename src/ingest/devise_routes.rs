@@ -12,9 +12,9 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 
 use crate::dialect::{HttpMethod, ResourceScope, RouteSpec};
-use crate::naming::camelize;
 use crate::{ClassId, Symbol};
 
+use super::routes::controller_class_name;
 use super::util::{string_value, symbol_value};
 use super::{IngestError, IngestResult};
 
@@ -306,15 +306,4 @@ pub(super) fn ingest_devise_for(
         nest: false,
         entries,
     }))
-}
-
-/// `"c"` / `"admin/c"` → `CController` / `Admin::CController`.
-fn controller_class_name(short: &str) -> String {
-    let mut s = short
-        .split('/')
-        .map(camelize)
-        .collect::<Vec<_>>()
-        .join("::");
-    s.push_str("Controller");
-    s
 }

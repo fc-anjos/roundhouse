@@ -5,7 +5,7 @@
 //! re-ingest it under an isolated prism scope, then append the parsed
 //! actions. Keep the parse / survey / PrivateMarker dance here once.
 
-use crate::dialect::{Action, Controller, ControllerBodyItem};
+use crate::dialect::{Action, Controller, ControllerBodyItem, Filter, FilterKind};
 use crate::expr::{Expr, ExprNode, Literal};
 use crate::ident::Symbol;
 
@@ -14,7 +14,8 @@ use crate::ident::Symbol;
 /// (`<rate_limit>`, …) and appears in survey failure messages.
 ///
 /// Returns `false` when synthesis failed or produced nothing (caller
-/// should skip further work for this controller).
+/// should skip further work for this controller — and must not have
+/// already committed filter replacements).
 pub(super) fn append_private_actions(
     controller: &mut Controller,
     tag: &str,
@@ -23,33 +24,11 @@ pub(super) fn append_private_actions(
     if method_bodies.is_empty() {
         return false;
     }
-    let src = format!(
-        "class {} < ApplicationController\n  private\n{}end\n",
-        controller.name.0.as_str(),
-        method_bodies
-    );
-    // Isolated prism scope — never the outer app ingest — so a bug in
-    // the generated method source can't pin parse errors on an
-    // unrelated real file (see `ingest::sources`).
-    let (result, diags) = crate::ingest::prism::scope(|| {
-        super::controller::ingest_controller(src.as_bytes(), tag)
-    });
-    let parsed = match (result, diags.is_empty()) {
-        (Ok(Some(c)), true) => c,
-        (Ok(None), true) => return false,
-        (Ok(_), false) => {
-            let label = tag.trim_matches(|c| c == '<' || c == '>');
-            super::survey::record_synthesis_failure(
-                tag,
-                &format!("{label} forwarder for `{}`", controller.name.0.as_str()),
-                &diags,
-            );
-            return false;
-        }
-        (Err(err), _) => {
-            super::survey::record(&err);
-            return false;
-        }
+    let wrapped = format!("  private\n{method_bodies}");
+    let Some(parsed_body) =
+        reingest_controller_body(controller.name.0.as_str(), tag, &wrapped)
+    else {
+        return false;
     };
     let has_private_marker = controller
         .body
@@ -61,7 +40,7 @@ pub(super) fn append_private_actions(
             leading_blank_line: true,
         });
     }
-    for item in parsed.body {
+    for item in parsed_body {
         if let ControllerBodyItem::Action { action, .. } = item {
             push_action(controller, action);
         }
@@ -106,6 +85,50 @@ pub(super) fn push_action(controller: &mut Controller, action: Action) {
         leading_comments: Vec::new(),
         leading_blank_line: true,
     });
+}
+
+/// Replace an `Unknown` class-body item with a synthetic `before_action`
+/// targeting `method`. Shared by `rate_limit` / `invisible_captcha`.
+pub(super) fn install_before_filter(
+    item: &mut ControllerBodyItem,
+    method: &str,
+    only: Vec<Symbol>,
+    except: Vec<Symbol>,
+    prepend: bool,
+    if_cond: Option<Symbol>,
+    unless_cond: Option<Symbol>,
+    if_cond_expr: Option<Expr>,
+    unless_cond_expr: Option<Expr>,
+) {
+    let ControllerBodyItem::Unknown {
+        leading_comments,
+        leading_blank_line,
+        ..
+    } = item
+    else {
+        return;
+    };
+    let f = Filter {
+        target_span: crate::span::Span::synthetic(),
+        kind: FilterKind::Before,
+        target: Symbol::from(method),
+        from_concern: None,
+        only,
+        except,
+        only_style: Default::default(),
+        except_style: Default::default(),
+        if_cond,
+        unless_cond,
+        if_cond_expr,
+        unless_cond_expr,
+        block: None,
+        prepend,
+    };
+    *item = ControllerBodyItem::Filter {
+        filter: f,
+        leading_comments: std::mem::take(leading_comments),
+        leading_blank_line: *leading_blank_line,
+    };
 }
 
 /// `:create` / `[:create, :update]` → the names; anything else → None.

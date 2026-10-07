@@ -6,12 +6,17 @@
 //! `rate_limit` is. Recognized options: `only:`, `except:`, `prepend:`.
 //! Unsupported kwargs (`honeypot:`, `on_spam:`, …) leave the call as
 //! `Unknown` so the survey still names them.
+//!
+//! Filters are installed only after private-method synth succeeds, so a
+//! failed re-ingest never leaves orphan `before_action`s.
 
-use crate::dialect::{Controller, ControllerBodyItem, Filter, FilterKind};
+use crate::dialect::{Controller, ControllerBodyItem};
 use crate::expr::{Expr, ExprNode, Literal};
 use crate::ident::Symbol;
 
-use super::controller_macro_synth::{append_private_actions, expr_symbol_list};
+use super::controller_macro_synth::{
+    append_private_actions, expr_symbol_list, install_before_filter,
+};
 
 struct Captcha {
     method: String,
@@ -22,15 +27,33 @@ struct Captcha {
 
 pub fn lower_invisible_captcha(app: &mut crate::App) {
     for controller in &mut app.controllers {
-        let captchas = take_from_controller_body(controller);
+        let captchas = collect_captchas(controller);
         if captchas.is_empty() {
             continue;
         }
         let mut methods = String::new();
-        for c in &captchas {
+        for (_, c) in &captchas {
             methods.push_str(&method_source(c));
         }
-        let _ = append_private_actions(controller, "<invisible_captcha>", &methods);
+        if !append_private_actions(controller, "<invisible_captcha>", &methods) {
+            continue;
+        }
+        // Indices are still valid: append only pushed at the end.
+        for (idx, c) in &captchas {
+            if let Some(item) = controller.body.get_mut(*idx) {
+                install_before_filter(
+                    item,
+                    &c.method,
+                    c.only.clone(),
+                    c.except.clone(),
+                    c.prepend,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            }
+        }
     }
 }
 
@@ -41,45 +64,20 @@ fn method_source(c: &Captcha) -> String {
     )
 }
 
-fn take_from_controller_body(controller: &mut Controller) -> Vec<Captcha> {
-    let mut found: Vec<Captcha> = Vec::new();
-    for item in controller.body.iter_mut() {
-        let ControllerBodyItem::Unknown {
-            expr,
-            leading_comments,
-            leading_blank_line,
-        } = item
-        else {
+/// Parse expandable `invisible_captcha` calls without mutating the body.
+fn collect_captchas(controller: &Controller) -> Vec<(usize, Captcha)> {
+    let mut found: Vec<(usize, Captcha)> = Vec::new();
+    for (i, item) in controller.body.iter().enumerate() {
+        let ControllerBodyItem::Unknown { expr, .. } = item else {
             continue;
         };
         let Some(mut captcha) = captcha_from_call(expr) else {
             continue;
         };
-        if found.iter().any(|f| f.method == captcha.method) {
+        if found.iter().any(|(_, f)| f.method == captcha.method) {
             captcha.method = format!("{}_{}", captcha.method, found.len() + 1);
         }
-        let f = Filter {
-            target_span: crate::span::Span::synthetic(),
-            kind: FilterKind::Before,
-            target: Symbol::from(captcha.method.as_str()),
-            from_concern: None,
-            only: captcha.only.clone(),
-            except: captcha.except.clone(),
-            only_style: Default::default(),
-            except_style: Default::default(),
-            if_cond: None,
-            unless_cond: None,
-            if_cond_expr: None,
-            unless_cond_expr: None,
-            block: None,
-            prepend: captcha.prepend,
-        };
-        *item = ControllerBodyItem::Filter {
-            filter: f,
-            leading_comments: std::mem::take(leading_comments),
-            leading_blank_line: *leading_blank_line,
-        };
-        found.push(captcha);
+        found.push((i, captcha));
     }
     found
 }
