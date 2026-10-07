@@ -439,6 +439,32 @@ end
         flat.iter().any(|r| r.as_name == "user_root"),
         "authenticated root as: :user_root: {flat:?}"
     );
+    assert!(
+        flat.iter().any(|r| r.path == "/admin" && r.as_name == "admin_root"),
+        "namespaced root without as: keeps admin_root: {flat:?}"
+    );
+}
+
+#[test]
+fn namespaced_root_as_applies_name_prefix() {
+    let source = br#"Rails.application.routes.draw do
+  namespace :admin do
+    root to: "dashboard#show", as: :home
+  end
+end
+"#;
+    let table = roundhouse::ingest::ingest_routes(source, "config/routes.rb").expect("ingest");
+    let mut app = roundhouse::App::default();
+    app.routes = table;
+    let flat = roundhouse::lower::flatten_routes(&app);
+    assert!(
+        flat.iter().any(|r| r.path == "/admin" && r.as_name == "admin_home"),
+        "namespace as: prefix on root: {flat:?}"
+    );
+    assert!(
+        !flat.iter().any(|r| r.as_name == "home"),
+        "bare home helper must not win over admin_home: {flat:?}"
+    );
 }
 
 #[test]

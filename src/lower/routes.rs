@@ -500,9 +500,12 @@ fn collect_flat_routes(spec: &RouteSpec, out: &mut Vec<FlatRoute>, ctx: &Ctx) {
             );
             let path =
                 if ctx.ns_path.is_empty() { "/".to_string() } else { ctx.ns_path.clone() };
+            // Rails applies the scope `as` prefix to an explicit root
+            // `as:` (`namespace :admin do root … as: :home end` →
+            // `admin_home`), matching Explicit's name_prefix handling.
             let helper = as_name
                 .as_ref()
-                .map(|s| s.as_str().to_string())
+                .map(|s| format!("{}{}", ctx.name_prefix, s.as_str()))
                 .unwrap_or_else(|| format!("{}root", ctx.name_prefix));
             out.push(FlatRoute {
                 method: HttpMethod::Get,

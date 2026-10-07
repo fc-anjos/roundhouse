@@ -116,3 +116,57 @@ fn impersonates_wraps_current_user_and_adds_impersonate_helpers() {
         "macro must be consumed:\n{src}"
     );
 }
+
+#[test]
+fn impersonates_without_local_current_user_stays_unsupported() {
+    let files: HashMap<PathBuf, Vec<u8>> = [
+        (
+            PathBuf::from("db/schema.rb"),
+            b"ActiveRecord::Schema.define do\n  create_table \"users\", force: :cascade do |t|\n    t.string \"email\", null: false\n  end\nend\n".to_vec(),
+        ),
+        (
+            PathBuf::from("config/routes.rb"),
+            b"Rails.application.routes.draw do\n  resources :users, only: %i[ show ]\nend\n".to_vec(),
+        ),
+        (
+            PathBuf::from("app/models/user.rb"),
+            b"class User < ApplicationRecord\nend\n".to_vec(),
+        ),
+        (
+            PathBuf::from("app/models/application_record.rb"),
+            b"class ApplicationRecord < ActiveRecord::Base\n  self.abstract_class = true\nend\n".to_vec(),
+        ),
+        (
+            PathBuf::from("app/controllers/application_controller.rb"),
+            b"class ApplicationController < ActionController::Base\n  impersonates :user\nend\n".to_vec(),
+        ),
+        (
+            PathBuf::from("app/controllers/users_controller.rb"),
+            b"class UsersController < ApplicationController\n  def show\n  end\nend\n".to_vec(),
+        ),
+        (
+            PathBuf::from("app/views/users/show.html.erb"),
+            b"<p>ok</p>\n".to_vec(),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    survey::activate();
+    let mut app = ingest_app_from_tree(files).expect("ingest");
+    let gaps = survey::drain();
+    assert!(
+        gaps.iter().any(|g| format!("{g:?}").contains("impersonates")),
+        "inherited-only current_user must survey impersonates: {gaps:?}"
+    );
+    roundhouse::session::analyze_and_lower(&mut app);
+    let src = ruby::emit_spinel(&app)
+        .iter()
+        .find(|f| f.path.ends_with("app/controllers/application_controller.rb"))
+        .expect("application_controller")
+        .content
+        .clone();
+    assert!(
+        !src.contains("def true_user") && !src.contains("def impersonate_user"),
+        "must not synthesize empty pretender surface:\n{src}"
+    );
+}

@@ -2,16 +2,17 @@
 //! `impersonate_user`, and `stop_impersonating_user`.
 //!
 //! Pretender's class-body macro is method synthesis, not a filter.
-//! Recognized shape: `impersonates :scope` with no kwargs. When the
-//! controller already defines `current_<scope>`, that body is renamed
-//! to `true_<scope>` and wrapped. When it does not (Devise may supply
-//! `current_<scope>` only as a typed seam), an empty `true_<scope>` is
-//! synthesized so the pretender surface still exists — no invented host
-//! session key. A class-level `alias_method :true_<scope>, :current_<scope>`
-//! is not used here: `apply_alias_methods` copies bodies after the wrap
-//! is already in the method list, which would recurse. Unsupported
-//! kwargs leave the call as `Unknown` for the survey. ActionCable
-//! `impersonates` is a different host and is not handled here.
+//! Recognized shape: `impersonates :scope` with no kwargs **and** a
+//! local `current_<scope>` action on the same controller. That body is
+//! renamed to `true_<scope>` and wrapped. Without a local definition
+//! (inherited Devise helper only), the call stays `Unknown` — synthesizing
+//! an empty `true_<scope>` would shadow the inherited method and return
+//! nil when not impersonating. A class-level
+//! `alias_method :true_<scope>, :current_<scope>` is not used here:
+//! `apply_alias_methods` copies bodies after the wrap is already in the
+//! method list, which would recurse. Unsupported kwargs leave the call
+//! as `Unknown` for the survey. ActionCable `impersonates` is a different
+//! host and is not handled here.
 //!
 //! Mutation is atomic: the macro and any rename stay uncommitted until
 //! re-ingest of the synthesized methods succeeds.
@@ -41,7 +42,11 @@ pub fn lower_impersonates(app: &mut crate::App) {
                     if action.name.as_str() == current_name
             )
         });
-        let src = method_source(&imp, !has_local);
+        // No local current_* → leave Unsupported (do not shadow inherited).
+        if !has_local {
+            continue;
+        }
+        let src = method_source(&imp);
         let Some(parsed_body) = reingest_controller_body(
             controller.name.0.as_str(),
             "<impersonates>",
@@ -53,20 +58,18 @@ pub fn lower_impersonates(app: &mut crate::App) {
 
         // Commit: drop the macro, rename local current_* → true_*, append synth.
         controller.body.remove(macro_idx);
-        if has_local {
-            for item in controller.body.iter_mut() {
-                if let ControllerBodyItem::Action { action, .. } = item {
-                    if action.name.as_str() == current_name {
-                        action.name = Symbol::from(true_name.as_str());
-                        break;
-                    }
+        for item in controller.body.iter_mut() {
+            if let ControllerBodyItem::Action { action, .. } = item {
+                if action.name.as_str() == current_name {
+                    action.name = Symbol::from(true_name.as_str());
+                    break;
                 }
             }
         }
         for item in parsed_body {
             match item {
                 ControllerBodyItem::Action { action, .. } => {
-                    if has_local && action.name.as_str() == true_name {
+                    if action.name.as_str() == true_name {
                         continue;
                     }
                     if action.name.as_str() == current_name {
@@ -118,21 +121,15 @@ fn is_helper_method_true_user(expr: &Expr, true_name: &str) -> bool {
     })
 }
 
-fn method_source(imp: &Impersonation, synthesize_true_user: bool) -> String {
+fn method_source(imp: &Impersonation) -> String {
     let scope = &imp.scope;
     let model = &imp.model;
     let session_key = format!("impersonated_{scope}_id");
-    let mut out = String::new();
-    if synthesize_true_user {
-        // Pretender aliases an existing `current_<scope>`. Without a
-        // local definition (e.g. only a typed Devise seam), synthesize
-        // an empty true_<scope> so the wrap and impersonate_* surface
-        // still exist — no invented host session key. Do not emit
-        // `alias_method` here: apply_alias_methods would copy the
-        // already-wrapped current_<scope> body onto true_<scope>.
-        out.push_str(&format!("  def true_{scope}\n  end\n"));
-    }
-    out.push_str(&format!(
+    // Caller renamed local `current_<scope>` → `true_<scope>` before
+    // appending this wrap. Do not emit `alias_method` here:
+    // `apply_alias_methods` would copy the already-wrapped
+    // `current_<scope>` body onto `true_<scope>`.
+    format!(
         "  helper_method :true_{scope}\n\
          \n\
            def current_{scope}\n\
@@ -152,8 +149,7 @@ fn method_source(imp: &Impersonation, synthesize_true_user: bool) -> String {
              session.delete(:{session_key})\n\
              @impersonated_{scope} = nil\n\
            end\n"
-    ));
-    out
+    )
 }
 
 /// Locate a recognized `impersonates` call without mutating the body.
