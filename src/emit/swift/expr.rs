@@ -2698,7 +2698,17 @@ fn emit_send(
         }
         match crate::emit::shared::ops::classify_binop(method) {
             crate::emit::shared::ops::BinopCase::NativeInfix(op) => {
-                return format!("{} {} {}", emit_expr(r), op, args_s[0]);
+                // Swift permits `try` at the start of an infix expression,
+                // but an eager right operand needs its own parentheses:
+                // `expected != (try Router.decodeCapture(value))`.
+                // Leave lazy boolean operators to their existing lowering.
+                let rhs = &args_s[0];
+                let rhs = if !matches!(op, "&&" | "||") && rhs.starts_with("try ") {
+                    format!("({rhs})")
+                } else {
+                    rhs.clone()
+                };
+                return format!("{} {} {rhs}", emit_expr(r), op);
             }
             // `<<` / `push` → Array.append.
             crate::emit::shared::ops::BinopCase::Append => {
