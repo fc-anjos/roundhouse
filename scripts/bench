@@ -1043,8 +1043,13 @@ start_target() {
             ;;
         crystal)
             # AOT-compiled binary — single-process, no workers concept.
+            # Size the crystal-db pool to wrk concurrency: crystal binds
+            # C libsqlite3 (like rust/spinel), so a concurrency-sized
+            # pool is the right default — unlike Go/modernc, which
+            # collapses when oversized. Same DATABASE_POOL_SIZE knob.
             (cd "$CR_OUT" && \
                 PORT="$port" \
+                DATABASE_POOL_SIZE="$CONNECTIONS" \
                 ./.bin/server \
                 >"$log" 2>&1) &
             TARGET_PID=$!

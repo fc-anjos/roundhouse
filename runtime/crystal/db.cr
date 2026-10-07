@@ -66,6 +66,17 @@ module Roundhouse
       @@db.not_nil!
     end
 
+    # WAL + a sized connection pool (roundhouse#17). crystal-db's
+    # `DB.open` already returns a pool; without URI PRAGMAs every
+    # checkout stayed on rollback-journal defaults, and without an
+    # explicit `max_pool_size` the idle pool collapsed to 1. The two
+    # are joint: WAL lets readers proceed alongside a writer, but that
+    # concurrency has nowhere to go unless the pool can hand out more
+    # than one connection. crystal-sqlite3 applies journal_mode /
+    # synchronous / busy_timeout from the URI on every pooled open
+    # (a one-shot `db.exec("PRAGMA …")` would only configure whichever
+    # single connection it landed on). Honors `DATABASE_POOL_SIZE`
+    # (same knob rust/spinel/go read); defaults to CPU count.
     def self.open_production_db(path : String, schema_sql : String) : Nil
       reset_statements
       if old = @@db
@@ -73,7 +84,11 @@ module Roundhouse
       end
       dir = File.dirname(path)
       Dir.mkdir_p(dir) unless Dir.exists?(dir)
-      db = DB.open("sqlite3://#{path}")
+      n = prod_pool_size
+      # crystal-sqlite3 URI keys are lowercase; pool keys are crystal-db's.
+      uri = "sqlite3://#{path}?journal_mode=wal&synchronous=normal&busy_timeout=5000" \
+            "&max_pool_size=#{n}&max_idle_pool_size=#{n}&initial_pool_size=#{n}"
+      db = DB.open(uri)
       count = db.query_one(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
         as: Int64,
@@ -86,6 +101,20 @@ module Roundhouse
         end
       end
       @@db = db
+    end
+
+    # Production pool size. `DATABASE_POOL_SIZE` overrides; otherwise
+    # `System.cpu_count` (libsqlite3 scales with cores the way rust/
+    # spinel do — unlike Go/modernc, which collapses when oversized).
+    # Falls back to 4 when cpu_count is unavailable. Tests use
+    # `setup_test_db`'s `:memory:` connection and don't go through here.
+    def self.prod_pool_size : Int32
+      if s = ENV["DATABASE_POOL_SIZE"]?
+        n = s.to_i?
+        return n if n && n > 0
+      end
+      c = System.cpu_count
+      c > 0 ? c.to_i : 4
     end
 
     # ── Low-level prepare/step/column API ────────────────────────
