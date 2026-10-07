@@ -1627,6 +1627,12 @@ impl<'a> BodyTyper<'a> {
             // has no user-defined ancestors in this corpus.
             Some(Ty::Time) => time_method(method).unwrap_or_else(unknown),
             Some(Ty::Date) => date_method(method, args).unwrap_or_else(unknown),
+            // `Integer#in_time_zone` lowers only for ≤1 arg (invariant 6).
+            Some(Ty::Int)
+                if method.as_str() == "in_time_zone" && args.len() > 1 =>
+            {
+                unknown()
+            }
             Some(Ty::Int) => int_method(method),
             Some(Ty::Float) => float_method(method),
             Some(Ty::Bool) => bool_method(method),
@@ -1986,6 +1992,16 @@ fn date_method(method: &Symbol, args: &[crate::expr::Expr]) -> Option<Ty> {
     let intish = |a: Option<&Ty>| {
         a.is_none_or(|t| matches!(t, Ty::Int | Ty::Var { .. } | Ty::Untyped))
     };
+    // `ActiveSupport.in_time_zone` takes a String?/Symbol zone (runtime
+    // `to_s`); reject known non-zone types such as `TimeZoneData`.
+    let zone_arg = |a: Option<&crate::expr::Expr>| {
+        a.is_none_or(|e| {
+            matches!(
+                e.ty.as_ref(),
+                None | Some(Ty::Str | Ty::Sym | Ty::Nil | Ty::Var { .. } | Ty::Untyped)
+            )
+        })
+    };
     // Arity must match `lower::time_calendar::rewrite_date_value` — typing
     // a send the lowerer leaves alone is invariant 6 (silent NoMethodError).
     let zero = args.is_empty();
@@ -2032,7 +2048,7 @@ fn date_method(method: &Symbol, args: &[crate::expr::Expr]) -> Option<Ty> {
         "to_time" | "beginning_of_day" | "end_of_day" | "midnight" | "at_midnight"
         | "at_beginning_of_day" | "at_end_of_day" | "noon" | "at_noon" | "middle_of_day"
         | "at_middle_of_day" if zero => time(),
-        "in_time_zone" if args.len() <= 1 => time(),
+        "in_time_zone" if args.len() <= 1 && zone_arg(args.first()) => time(),
         // `all_day` is a Time range (day edges); month/week/year stay Date.
         "all_day" if zero => Ty::Class {
             id: ClassId(Symbol::from("Range")),
