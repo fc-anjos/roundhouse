@@ -2835,6 +2835,47 @@ end
 }
 
 #[test]
+fn date_shift_untyped_stays_gradual() {
+    // `>>` / `<<` are native on Spinel Date, but an Untyped operand is
+    // not known to be an Integer month count — same gradual bar as `+`.
+    let app = app_from_files(&[
+        (
+            "app/models/application_record.rb",
+            "class ApplicationRecord < ActiveRecord::Base\nend\n",
+        ),
+        (
+            "db/schema.rb",
+            "ActiveRecord::Schema.define do\n  create_table \"things\" do |t|\n    t.date \"due_on\"\n  end\nend\n",
+        ),
+        (
+            "app/models/thing.rb",
+            r#"class Thing < ApplicationRecord
+  def shift_right
+    due_on >> 1.ago
+  end
+
+  def shift_left
+    due_on << 1.ago
+  end
+end
+"#,
+        ),
+    ]);
+    let thing = app
+        .models
+        .iter()
+        .find(|m| m.name.0.as_str() == "Thing")
+        .expect("Thing");
+    for name in ["shift_right", "shift_left"] {
+        let m = thing.methods().find(|m| m.name.as_str() == name).expect(name);
+        match m.body.ty.as_ref() {
+            Some(Ty::Untyped) => {}
+            other => panic!("Date {name} with Untyped must stay Untyped, got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn use_zone_answers_its_block_value() {
     let app = app_from_files(&[
         (

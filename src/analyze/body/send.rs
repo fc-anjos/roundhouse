@@ -1989,9 +1989,6 @@ fn date_method(method: &Symbol, args: &[crate::expr::Expr]) -> Option<Ty> {
     let int_shift = |a: Option<&Ty>| {
         a.is_none_or(|t| matches!(t, Ty::Int | Ty::Var { .. }))
     };
-    let intish = |a: Option<&Ty>| {
-        a.is_none_or(|t| matches!(t, Ty::Int | Ty::Var { .. } | Ty::Untyped))
-    };
     // `ActiveSupport.in_time_zone` takes a String?/Symbol zone (runtime
     // `to_s`); reject known non-zone types such as `TimeZoneData`.
     let zone_arg = |a: Option<&crate::expr::Expr>| {
@@ -2008,7 +2005,14 @@ fn date_method(method: &Symbol, args: &[crate::expr::Expr]) -> Option<Ty> {
     let at_most_one_int = args.len() <= 1 && args.first().map(|a| int_shift(a.ty.as_ref())).unwrap_or(true);
     Some(match method.as_str() {
         // Stdlib month shift stays on Date (Spinel implements >> / <<).
-        ">>" | "<<" if args.len() == 1 && intish(args[0].ty.as_ref()) => date(),
+        // `Date >> Untyped` stays gradual — same bar as `+` (operand may
+        // not be an Integer; claiming Date would green-light Date-only
+        // follow-ups after a send that can TypeError).
+        ">>" | "<<" if args.len() == 1 => match args[0].ty.as_ref() {
+            Some(Ty::Untyped) => Ty::Untyped,
+            Some(Ty::Int) | Some(Ty::Var { .. }) | None => date(),
+            _ => return None,
+        },
         // `Date + Integer` → Date. `Date + Untyped` stays gradual: the
         // operand might not be an Integer day shift, and Spinel has no `+`.
         "+" if args.len() == 1 => match args[0].ty.as_ref() {
