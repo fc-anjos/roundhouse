@@ -7211,7 +7211,7 @@ fn is_abstract_body(body: &Expr) -> bool {
     }
 }
 
-fn effective_return_ty(body: &Expr) -> Option<Ty> {
+pub(crate) fn effective_return_ty(body: &Expr) -> Option<Ty> {
     let mut tys: Vec<Ty> = Vec::new();
     let mut saw_return = false;
     collect_return_types(body, &mut tys, &mut saw_return);
