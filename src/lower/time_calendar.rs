@@ -377,7 +377,10 @@ fn is_time_const(e: &Expr) -> bool {
 }
 
 fn is_date_const(e: &Expr) -> bool {
-    matches!(&*e.node, ExprNode::Const { path } if path.len() == 1 && path[0].as_str() == "Date")
+    // Bare `Date` and rooted `::Date` (empty leading path segments) are the
+    // top-level constant — see #517.
+    matches!(&*e.node, ExprNode::Const { path } if path.last().is_some_and(|s| s.as_str() == "Date")
+        && path.iter().rev().skip(1).all(|s| s.as_str().is_empty()))
 }
 
 fn is_time_zone_send(e: &Expr) -> bool {

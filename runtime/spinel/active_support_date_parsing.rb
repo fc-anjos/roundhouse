@@ -34,8 +34,22 @@ module ActiveSupport
     Date.new(now.year, now.month, now.day)
   end
 
+  # Zero-arg form used by Spinel Date-column tests and direct callsites;
+  # lowering prefers `date_current(now)` so the clock is explicit.
+  def self.current_date
+    date_current(ActiveSupport.now)
+  end
+
   def self.date_at_midnight(d)
     local_time(d.year, d.month, d.day, 0, 0, 0, 0)
+  end
+
+  def self.date_beginning_of_day(date)
+    date_at_midnight(date)
+  end
+
+  def self.date_end_of_day(date)
+    ActiveSupport.local_time(date.year, date.month, date.day, 23, 59, 59, 999_999_999)
   end
 
   def self.date_from_civil(days)
@@ -71,7 +85,7 @@ module ActiveSupport
     total = d.year * 12 + d.month - 1 + n
     y = total / 12
     m = total % 12 + 1
-    last = days_in_month(y, m)
+    last = Date.month_length(y, m)
     Date.new(y, m, d.day > last ? last : d.day)
   end
 
@@ -108,7 +122,7 @@ module ActiveSupport
   end
 
   def self.date_end_of_month(d)
-    Date.new(d.year, d.month, days_in_month(d.year, d.month))
+    Date.new(d.year, d.month, Date.month_length(d.year, d.month))
   end
 
   def self.date_beginning_of_year(d)
