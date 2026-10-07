@@ -1108,7 +1108,13 @@ impl Analyzer {
             crate::timings::phase(format_args!("round {round}: unify params"), || {
                 self.unify_params_from_call_sites(app, UnifyScope::Production)
             });
-            if self.inference_matches(&prev_hints.sig) {
+            // Returns+params settle independently of block-value
+            // verdicts (`DirtyHints`); both must be quiet before the
+            // loop stops, or a newly block-valued method leaves its
+            // callers on the registered return instead of the block.
+            if self.inference_matches(&prev_hints.sig)
+                && self.block_value_matches(&prev_hints)
+            {
                 break;
             }
             // Re-type with the refined registry. Idempotent BodyTyper
@@ -1198,7 +1204,9 @@ impl Analyzer {
                     }
                 },
             );
-            if self.inference_matches(&prev_hints.sig) {
+            if self.inference_matches(&prev_hints.sig)
+                && self.block_value_matches(&prev_hints)
+            {
                 break;
             }
             prev_hints = self.capture_dirty_hints();
@@ -1236,7 +1244,9 @@ impl Analyzer {
                     snapshot.clone_from(&self.inferred_params);
                 }
                 self.overlay_test_params(app);
-                if self.inference_matches(&absorb_hints.sig) {
+                if self.inference_matches(&absorb_hints.sig)
+                    && self.block_value_matches(&absorb_hints)
+                {
                     break;
                 }
                 absorb_dirty = self.dirty_classes_for_retype(app, &absorb_hints);
@@ -4023,6 +4033,26 @@ impl Analyzer {
             match prev.class_methods.get(id) {
                 Some(methods) if methods == &cls.class_methods => {}
                 _ => return false,
+            }
+        }
+        true
+    }
+
+    /// Block-value verdicts stay on [`DirtyHints`], not [`InferenceSig`],
+    /// so convergence fingerprinting cannot accidentally absorb them.
+    /// The fixpoint still waits on them: a missing prior entry matches
+    /// only an empty current set.
+    fn block_value_matches(&self, prev: &DirtyHints) -> bool {
+        for (id, cls) in &self.classes {
+            match prev.block_value.get(id) {
+                Some(methods) if methods == &cls.block_value_methods => {}
+                None if cls.block_value_methods.is_empty() => {}
+                _ => return false,
+            }
+        }
+        for id in prev.block_value.keys() {
+            if !self.classes.contains_key(id) {
+                return false;
             }
         }
         true

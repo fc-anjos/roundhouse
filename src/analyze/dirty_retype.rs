@@ -136,6 +136,9 @@ pub(super) fn dirty_classes_for_retype(
         }
     }
 
+    // Descendants and included modules share one worklist so a module
+    // pulled in for concern-ivar seeding also dirties its other
+    // includers (children). Separate passes left those siblings clean.
     let mut queue: Vec<ClassId> = dirty.iter().cloned().collect();
     let mut qi = 0;
     while qi < queue.len() {
@@ -146,13 +149,7 @@ pub(super) fn dirty_classes_for_retype(
                 queue.push(child);
             }
         }
-    }
-
-    let mut queue: Vec<ClassId> = dirty.iter().cloned().collect();
-    let mut qi = 0;
-    while qi < queue.len() {
-        let mut cursor = Some(queue[qi].clone());
-        qi += 1;
+        let mut cursor = Some(id);
         for _ in 0..32 {
             let Some(cid) = cursor else { break };
             let Some(cls) = classes.get(&cid) else { break };
