@@ -112,8 +112,54 @@ fn scalar_body_backfills_rbs_return() {
     let rbs = emitted(&files, "user.rbs");
     assert!(rbs.contains("def self.username_regex_s: () -> String"), "{rbs}");
     assert!(rbs.contains("def dom_suffix: () -> String"), "{rbs}");
-    // An early `return` of another shape must NOT be pinned over.
-    assert!(rbs.contains("def maybe_name: () -> untyped"), "{rbs}");
+    // An early `return` joins the tail in the union: `return nil` plus
+    // a String tail is a nullable String, not the tail alone.
+    assert!(rbs.contains("def maybe_name: () -> String?"), "{rbs}");
+}
+
+#[test]
+fn container_and_return_bodies_backfill_return() {
+    // A method returning an Array, a Hash, or through an explicit
+    // `return` kept `signature: None`. The `.rbs` said `untyped`, and
+    // the Rust emitter rendered `pub fn c1()` -- a `()` return around a
+    // `vec![..]` tail -- so the crate did not compile.
+    let body = r#"  def self.ints
+    [1]
+  end
+  def self.doubled
+    [1, 2].map { |x| x * 2 }
+  end
+  def self.counts
+    { "a" => 1 }
+  end
+  def self.early
+    return [3]
+  end
+  def self.word
+    return "a"
+  end
+  def self.mixed
+    return [1] if @username.nil?
+    "x"
+  end
+"#;
+    let app = app_with(body, "  def index\n    render plain: \"ok\"\n  end\n");
+    let rbs = emitted(&ruby::emit_lowered_models(&app), "user.rbs");
+    assert!(rbs.contains("def self.ints: () -> Array[Integer]"), "{rbs}");
+    assert!(rbs.contains("def self.doubled: () -> Array[Integer]"), "{rbs}");
+    assert!(rbs.contains("def self.counts: () -> Hash[String, Integer]"), "{rbs}");
+    assert!(rbs.contains("def self.early: () -> Array[Integer]"), "{rbs}");
+    assert!(rbs.contains("def self.word: () -> String"), "{rbs}");
+    // A `return` of one shape and a tail of another has no single type.
+    assert!(rbs.contains("def self.mixed: () -> untyped"), "{rbs}");
+
+    let app = app_with(body, "  def index\n    render plain: \"ok\"\n  end\n");
+    let rs = emitted(&roundhouse::emit::rust::emit(&app), "models/user.rs");
+    assert!(rs.contains("pub fn ints() -> Vec<i64> {"), "{rs}");
+    assert!(rs.contains("pub fn doubled() -> Vec<i64> {"), "{rs}");
+    assert!(rs.contains("pub fn counts() -> std::collections::HashMap<String, i64> {"), "{rs}");
+    assert!(rs.contains("pub fn early() -> Vec<i64> {"), "{rs}");
+    assert!(rs.contains("pub fn word() -> String {"), "{rs}");
 }
 
 #[test]

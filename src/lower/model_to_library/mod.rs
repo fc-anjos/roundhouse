@@ -2231,11 +2231,15 @@ fn type_method_body(
 /// typed — and under spinel AOT an untyped return turns every chained
 /// call into a whole-program poly dispatch (lobsters:
 /// `User.username_regex_s[1...-1]` became a 26-class `[]` switch that
-/// doesn't C-compile). Scalars only, and only when the body has no
-/// explicit `return` (an early return of another type would make the
-/// trailing-expression type a lie — in Ruby a `return` inside a block
-/// exits the method, so the walk counts those too). If/Case bodies
-/// union their branches, so divergent shapes fail the scalar gate on
+/// doesn't C-compile). Typed targets need it as much: Rust renders an
+/// unsigned method as `fn c1()`, i.e. `()`, whatever its body returns.
+///
+/// The return type is the body's effective return — every explicit
+/// `return` value unioned with the tail (in Ruby a `return` inside a
+/// block exits the method, so the walk counts those too) — and is
+/// pinned only when that is a scalar (optionally nullable) or an
+/// Array / Hash of such scalars. If/Case bodies and divergent
+/// `return`s union their shapes, so mixed answers fail the gate on
 /// their own. Param types stay untyped — this pins only the return.
 /// A scalar, or a scalar unioned with nil — `String?` and friends.
 ///
@@ -2263,12 +2267,31 @@ fn scalar_or_nullable_scalar(ty: &Ty) -> bool {
     }
 }
 
+/// A scalar return, or a flat Array / Hash whose elements are scalars
+/// (`[1]` → `Array[Integer]`, `{ "a" => 1 }` → `Hash[String, Integer]`).
+fn backfillable_return(ty: &Ty) -> bool {
+    match ty {
+        Ty::Array { elem } => scalar_or_nullable_scalar(elem),
+        Ty::Hash { key, value } => {
+            matches!(**key, Ty::Str | Ty::Sym | Ty::Int) && scalar_or_nullable_scalar(value)
+        }
+        t => scalar_or_nullable_scalar(t),
+    }
+}
+
 fn backfill_scalar_signature(method: &mut MethodDef, body_ty: Ty) {
-    if method.signature.is_some()
-        || method.block_param.is_some()
-        || !scalar_or_nullable_scalar(&body_ty)
-        || contains_return(&method.body)
-    {
+    if method.signature.is_some() || method.block_param.is_some() {
+        return;
+    }
+    let ret = if contains_return(&method.body) {
+        match crate::analyze::effective_return_ty(&method.body) {
+            Some(t) => t,
+            None => return,
+        }
+    } else {
+        body_ty
+    };
+    if !backfillable_return(&ret) {
         return;
     }
     let params = method
@@ -2291,7 +2314,7 @@ fn backfill_scalar_signature(method: &mut MethodDef, body_ty: Ty) {
     method.signature = Some(Ty::Fn {
         params,
         block: None,
-        ret: Box::new(body_ty),
+        ret: Box::new(ret),
         effects: crate::effect::EffectSet::default(),
     });
 }
