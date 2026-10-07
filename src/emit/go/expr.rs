@@ -1997,11 +1997,12 @@ pub(super) fn emit_send(
             // `String#match?(re)` → `re.MatchString(s)`. Go's `regexp.Regexp`
             // is the receiver; there is no `string.MatchPred`.
             if method == "match?" {
+                // Require Regexp ty or a regex literal — not bare Const
+                // shape (a String-valued PATTERN must not flip).
                 let arg_is_regexp = matches!(
                     args[0].ty.as_ref(),
                     Some(Ty::Class { id, .. }) if id.0.as_str() == "Regexp"
-                ) || matches!(&*args[0].node, ExprNode::Lit { value: Literal::Regex { .. } })
-                    || matches!(&*args[0].node, ExprNode::Const { .. });
+                ) || matches!(&*args[0].node, ExprNode::Lit { value: Literal::Regex { .. } });
                 let recv_is_regexp = matches!(
                     r.ty.as_ref(),
                     Some(Ty::Class { id, .. }) if id.0.as_str() == "Regexp"
