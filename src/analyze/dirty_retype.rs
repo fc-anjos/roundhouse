@@ -165,6 +165,14 @@ pub(super) fn dirty_classes_for_retype(
         }
     }
 
+    // Seed sinks: `CurrentAttributes` is written FROM dirty callers via
+    // class-level forwarders (`Current.session = x`), not as a caller of
+    // a moved method. Keep those classes on every narrowed frontier so
+    // write-site refinements reseed `@attr` / readers / forwarders.
+    for id in &app.current_attribute_classes {
+        dirty.insert(id.clone());
+    }
+
     if std::env::var("RH_DEBUG_DIRTY").is_ok() {
         let mut names: Vec<&str> = dirty.iter().map(|c| c.0.as_str()).collect();
         names.sort();

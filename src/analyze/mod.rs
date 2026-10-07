@@ -3223,9 +3223,10 @@ impl Analyzer {
         // whatever the app actually assigns.
         //
         // The survey is a whole-app walk, so it is scoped to the
-        // classes the loop below will actually read it for: one this
-        // pass retypes, or a mailer, whose ivar harvest the views half
-        // reads either way. Every other library class takes the skip.
+        // classes the loop below will actually read it for. Narrowed
+        // dirty sets already include every `current_attribute_classes`
+        // entry (see `dirty_retype`); mailers stay surveyed either way
+        // because their ivar harvest feeds views.
         let current_attribute_writes: HashMap<ClassId, HashMap<Symbol, Ty>> = {
             let targets: std::collections::HashSet<&ClassId> = app
                 .current_attribute_classes
@@ -3271,6 +3272,27 @@ impl Analyzer {
         // the fixpoint re-runs this with refined types) into one row
         // per mailer, union per key across sites.
         let mailer_with_params = harvest_mailer_with_params(app, &mailer_names);
+        // `.with` rows advance from (possibly retyped) callers without
+        // marking the mailer dirty via the caller-closure. Force body
+        // retype when the params row moved so `@x = params[:x]` ivars
+        // in ViewSeeds stay aligned with template `params`.
+        let params_sym = Symbol::from("params");
+        let mailers_needing_retype: std::collections::HashSet<ClassId> = mailer_names
+            .iter()
+            .filter_map(|m| {
+                let row = mailer_with_params.get(m)?;
+                let new_ty = Ty::Record { row: row.clone() };
+                let old = self
+                    .classes
+                    .get(m)
+                    .and_then(|c| c.instance_methods.get(&params_sym));
+                if old == Some(&new_ty) {
+                    None
+                } else {
+                    Some(m.clone())
+                }
+            })
+            .collect();
         let mut mailer_params_by_view: HashMap<Symbol, Ty> = HashMap::new();
 
         let _typing_library = crate::timings::begin("typing: library");
@@ -3280,14 +3302,15 @@ impl Analyzer {
                     .entry(lc.name.clone())
                     .or_default()
                     .instance_methods
-                    .insert(Symbol::from("params"), Ty::Record { row: row.clone() });
+                    .insert(params_sym.clone(), Ty::Record { row: row.clone() });
             }
             // Same gate as the controller loops, with one thing it still
             // owes the views half: a MAILER's ivar harvest seeds its
             // template, so the `flow_ivars` walk below runs for one even
             // when its bodies are left alone.
             let lc_name = lc.name.clone();
-            let retype = dirty.is_none_or(|d| d.contains(&lc_name));
+            let retype = dirty.is_none_or(|d| d.contains(&lc_name))
+                || mailers_needing_retype.contains(&lc_name);
             if !retype && !mailer_names.contains(&lc_name) {
                 continue;
             }
@@ -5366,17 +5389,26 @@ impl Analyzer {
                 // defining helper module is what lets helper params
                 // unify from their template call sites.
                 let mut via_helper_index = false;
-                let recv_class = match recv {
-                    Some(r) => match r.ty.as_ref() {
-                        Some(Ty::Class { id, .. }) => Some(id.clone()),
-                        _ => None,
-                    },
-                    None => self_class.cloned().or_else(|| {
-                        via_helper_index = true;
-                        helpers.get(method).cloned()
-                    }),
+                // Expand Relation / Union / Array elem the way dispatch
+                // chases — the reverse call graph now decides retype,
+                // so Class-only receivers would leave callers of
+                // `records.first.foo` off the frontier.
+                let recv_classes: Vec<ClassId> = match recv {
+                    Some(r) => r
+                        .ty
+                        .as_ref()
+                        .map(class_ids_for_call_receiver)
+                        .unwrap_or_default(),
+                    None => self_class
+                        .cloned()
+                        .or_else(|| {
+                            via_helper_index = true;
+                            helpers.get(method).cloned()
+                        })
+                        .into_iter()
+                        .collect(),
                 };
-                if let Some(class_id) = recv_class {
+                if !recv_classes.is_empty() {
                     let arg_tys: Vec<Ty> = args
                         .iter()
                         .map(|a| {
@@ -5451,17 +5483,19 @@ impl Analyzer {
                     // still answered `Array[untyped]` to every caller.
                     // Only a CONSTANT receiver: an instance answering
                     // `new` is some other method entirely.
-                    if method.as_str() == "new"
-                        && recv.as_ref().is_some_and(|r| matches!(&*r.node, ExprNode::Const { .. }))
-                    {
-                        out.push((
-                            class_id.clone(),
-                            Symbol::from("initialize"),
-                            arg_tys.clone(),
-                            kw_tys.clone(),
-                        ));
+                    let record_initialize = method.as_str() == "new"
+                        && recv.as_ref().is_some_and(|r| matches!(&*r.node, ExprNode::Const { .. }));
+                    for class_id in recv_classes {
+                        if record_initialize {
+                            out.push((
+                                class_id.clone(),
+                                Symbol::from("initialize"),
+                                arg_tys.clone(),
+                                kw_tys.clone(),
+                            ));
+                        }
+                        out.push((class_id, method.clone(), arg_tys.clone(), kw_tys.clone()));
                     }
-                    out.push((class_id, method.clone(), arg_tys, kw_tys));
                 }
                 if let Some(r) = recv { self.collect_send_sites(r, self_class, helpers, out); }
                 for a in args { self.collect_send_sites(a, self_class, helpers, out); }
@@ -6659,6 +6693,29 @@ fn association_builder_members(assoc: &crate::dialect::Association) -> Vec<(Symb
             Ty::Union { variants: vec![record, Ty::Nil] },
         ),
     ]
+}
+
+/// Class ids a typed call receiver contributes to param unify and the
+/// reverse call graph. Mirrors the receivers dispatch actually chases:
+/// bare Class, Relation→model, Array elem, and Class arms of a Union.
+fn class_ids_for_call_receiver(ty: &Ty) -> Vec<ClassId> {
+    match ty {
+        Ty::Class { id, .. } => vec![id.clone()],
+        Ty::Relation { of } => vec![of.clone()],
+        Ty::Array { elem } => class_ids_for_call_receiver(elem),
+        Ty::Union { variants } => {
+            let mut out = Vec::new();
+            for v in variants {
+                for id in class_ids_for_call_receiver(v) {
+                    if !out.contains(&id) {
+                        out.push(id);
+                    }
+                }
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// The model-side twin of [`controller_includes`]: modules a model mixes
