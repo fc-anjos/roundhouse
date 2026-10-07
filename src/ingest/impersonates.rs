@@ -15,7 +15,9 @@
 //! host and is not handled here.
 //!
 //! Mutation is atomic: the macro and any rename stay uncommitted until
-//! re-ingest of the synthesized methods succeeds.
+//! re-ingest of the synthesized methods succeeds. Every expandable
+//! scope on a controller is processed; inherited-only calls are skipped
+//! without aborting the rest of the class body.
 
 use crate::dialect::{Controller, ControllerBodyItem};
 use crate::expr::{Expr, ExprNode, Literal};
@@ -29,12 +31,80 @@ struct Impersonation {
 }
 
 pub fn lower_impersonates(app: &mut crate::App) {
-    for controller in &mut app.controllers {
-        let Some((macro_idx, imp)) = find_impersonation(controller) else {
+    for ctrl_i in 0..app.controllers.len() {
+        // Re-find each round: a successful commit removes the macro and
+        // may shift indices. Inherited-only calls stay Unknown and are
+        // skipped so a later local scope on the same controller still expands.
+        while let Some((macro_idx, imp)) = next_expandable(&app.controllers[ctrl_i]) {
+            let current_name = format!("current_{}", imp.scope);
+            let true_name = format!("true_{}", imp.scope);
+            let src = method_source(&imp);
+            let Some(parsed_body) = reingest_controller_body(
+                app.controllers[ctrl_i].name.0.as_str(),
+                "<impersonates>",
+                &src,
+            ) else {
+                // Leave macros untouched; stop further expansion on this
+                // controller (synth failure is exceptional).
+                break;
+            };
+
+            let controller = &mut app.controllers[ctrl_i];
+            // Commit: drop the macro, rename local current_* → true_*, append synth.
+            controller.body.remove(macro_idx);
+            for item in controller.body.iter_mut() {
+                if let ControllerBodyItem::Action { action, .. } = item {
+                    if action.name.as_str() == current_name {
+                        action.name = Symbol::from(true_name.as_str());
+                        break;
+                    }
+                }
+            }
+            for item in parsed_body {
+                match item {
+                    ControllerBodyItem::Action { action, .. } => {
+                        push_action(controller, action);
+                    }
+                    ControllerBodyItem::Unknown { expr, .. } => {
+                        if is_helper_method_true_user(&expr, &true_name) {
+                            controller.body.push(ControllerBodyItem::Unknown {
+                                expr,
+                                leading_comments: Vec::new(),
+                                leading_blank_line: true,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Source ingest registered helpers before this lower. Refresh
+            // so views see `true_<scope>` (pretender's helper_method).
+            let true_sym = Symbol::from(true_name.as_str());
+            app.view_visible_controller_methods.insert(true_sym.clone());
+            let controller = &app.controllers[ctrl_i];
+            for name in crate::lower::controller_to_library::controller_helper_method_names(
+                controller,
+            ) {
+                if name == true_sym {
+                    app.helper_method_index
+                        .insert(name, controller.name.clone());
+                }
+            }
+        }
+    }
+}
+
+/// First recognized `impersonates` that has a local `current_<scope>`.
+fn next_expandable(controller: &Controller) -> Option<(usize, Impersonation)> {
+    for (i, item) in controller.body.iter().enumerate() {
+        let ControllerBodyItem::Unknown { expr, .. } = item else {
+            continue;
+        };
+        let Some(imp) = impersonation_from_call(expr) else {
             continue;
         };
         let current_name = format!("current_{}", imp.scope);
-        let true_name = format!("true_{}", imp.scope);
         let has_local = controller.body.iter().any(|item| {
             matches!(
                 item,
@@ -42,48 +112,12 @@ pub fn lower_impersonates(app: &mut crate::App) {
                     if action.name.as_str() == current_name
             )
         });
-        // No local current_* → leave Unsupported (do not shadow inherited).
-        if !has_local {
-            continue;
+        if has_local {
+            return Some((i, imp));
         }
-        let src = method_source(&imp);
-        let Some(parsed_body) = reingest_controller_body(
-            controller.name.0.as_str(),
-            "<impersonates>",
-            &src,
-        ) else {
-            // Leave the macro and existing methods untouched.
-            continue;
-        };
-
-        // Commit: drop the macro, rename local current_* → true_*, append synth.
-        controller.body.remove(macro_idx);
-        for item in controller.body.iter_mut() {
-            if let ControllerBodyItem::Action { action, .. } = item {
-                if action.name.as_str() == current_name {
-                    action.name = Symbol::from(true_name.as_str());
-                    break;
-                }
-            }
-        }
-        for item in parsed_body {
-            match item {
-                ControllerBodyItem::Action { action, .. } => {
-                    push_action(controller, action);
-                }
-                ControllerBodyItem::Unknown { expr, .. } => {
-                    if is_helper_method_true_user(&expr, &true_name) {
-                        controller.body.push(ControllerBodyItem::Unknown {
-                            expr,
-                            leading_comments: Vec::new(),
-                            leading_blank_line: true,
-                        });
-                    }
-                }
-                _ => {}
-            }
-        }
+        // Inherited-only: leave Unknown for survey; keep scanning.
     }
+    None
 }
 
 fn is_helper_method_true_user(expr: &Expr, true_name: &str) -> bool {
@@ -138,19 +172,6 @@ fn method_source(imp: &Impersonation) -> String {
              @impersonated_{scope} = nil\n\
            end\n"
     )
-}
-
-/// Locate a recognized `impersonates` call without mutating the body.
-fn find_impersonation(controller: &Controller) -> Option<(usize, Impersonation)> {
-    for (i, item) in controller.body.iter().enumerate() {
-        let ControllerBodyItem::Unknown { expr, .. } = item else {
-            continue;
-        };
-        if let Some(imp) = impersonation_from_call(expr) {
-            return Some((i, imp));
-        }
-    }
-    None
 }
 
 fn impersonation_from_call(call: &Expr) -> Option<Impersonation> {

@@ -313,7 +313,7 @@ const FATES: &[(&str, GemFate)] = &[
     ("nokogiri", GemFate::Modeled),    // catalog/gems: Nokogiri
     ("pdf-reader", GemFate::Modeled),  // catalog/gems: PDF::Reader
     ("platform_agent", GemFate::Modeled), // useragent port
-    ("pretender", GemFate::Modeled), // impersonates → true_user / impersonate_* (empty true_* without local current_*)
+    ("pretender", GemFate::Modeled), // impersonates with local current_* → true_* wrap + impersonate_*; inherited-only stays unsupported
     ("pushover", GemFate::Modeled),    // catalog/gems: Pushover
     ("rack-mini-profiler", GemFate::Modeled), // catalog/gems: Rack::MiniProfiler
     ("rotp", GemFate::Modeled),        // catalog/gems: ROTP::*
