@@ -69,18 +69,6 @@ pub fn lower_impersonates(app: &mut crate::App) {
         for item in parsed_body {
             match item {
                 ControllerBodyItem::Action { action, .. } => {
-                    if action.name.as_str() == true_name {
-                        continue;
-                    }
-                    if action.name.as_str() == current_name {
-                        controller.body.retain(|existing| {
-                            !matches!(
-                                existing,
-                                ControllerBodyItem::Action { action: a, .. }
-                                    if a.name.as_str() == current_name
-                            )
-                        });
-                    }
                     push_action(controller, action);
                 }
                 ControllerBodyItem::Unknown { expr, .. } => {
@@ -125,10 +113,10 @@ fn method_source(imp: &Impersonation) -> String {
     let scope = &imp.scope;
     let model = &imp.model;
     let session_key = format!("impersonated_{scope}_id");
-    // Caller renamed local `current_<scope>` → `true_<scope>` before
-    // appending this wrap. Do not emit `alias_method` here:
-    // `apply_alias_methods` would copy the already-wrapped
-    // `current_<scope>` body onto `true_<scope>`.
+    // After this re-ingest succeeds, the caller renames local
+    // `current_<scope>` → `true_<scope>` and appends this wrap. Do not
+    // emit `alias_method` here: `apply_alias_methods` would copy the
+    // already-wrapped `current_<scope>` body onto `true_<scope>`.
     format!(
         "  helper_method :true_{scope}\n\
          \n\
