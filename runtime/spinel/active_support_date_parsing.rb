@@ -85,7 +85,9 @@ module ActiveSupport
     total = d.year * 12 + d.month - 1 + n
     y = total / 12
     m = total % 12 + 1
-    last = Date.month_length(y, m)
+    # `days_in_month` from active_support_ext — not `Date.month_length`
+    # (Spinel-only); this file is shared with the Ruby-family emit.
+    last = days_in_month(y, m)
     Date.new(y, m, d.day > last ? last : d.day)
   end
 
@@ -122,7 +124,7 @@ module ActiveSupport
   end
 
   def self.date_end_of_month(d)
-    Date.new(d.year, d.month, Date.month_length(d.year, d.month))
+    Date.new(d.year, d.month, days_in_month(d.year, d.month))
   end
 
   def self.date_beginning_of_year(d)
