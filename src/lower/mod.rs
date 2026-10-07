@@ -175,6 +175,7 @@ pub mod view;
 pub mod view_buffer_passing;
 pub mod tag_block_passing;
 pub mod lazy_model_state;
+pub mod deferred_preload;
 pub mod view_to_library;
 
 pub use blank::apply_blank_lowering;
@@ -1223,6 +1224,10 @@ pub(crate) fn for_each_owned_hook_body(
                     }
                     f(&mut action.body)
                 }
+                crate::dialect::ControllerBodyItem::ClassMethod { method, .. } => {
+                    visit_param_defaults(&mut method.params, f);
+                    f(&mut method.body)
+                }
                 crate::dialect::ControllerBodyItem::Unknown { expr, .. } => f(expr),
                 // A filter's `if:` / `unless:` lambda body is spliced into
                 // the dispatcher as written (`process_action`), so it is
@@ -1345,6 +1350,10 @@ pub(crate) fn for_each_hook_body_ref(
                         f(default);
                     }
                     f(&action.body)
+                }
+                crate::dialect::ControllerBodyItem::ClassMethod { method, .. } => {
+                    visit_param_defaults(&method.params, f);
+                    f(&method.body)
                 }
                 crate::dialect::ControllerBodyItem::Unknown { expr, .. } => f(expr),
                 crate::dialect::ControllerBodyItem::Filter { filter, .. } => {
